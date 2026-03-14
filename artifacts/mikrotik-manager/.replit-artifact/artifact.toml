@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "MikroTik Manager"
+version = "1.0.0"
+id = "artifacts/mikrotik-manager"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+localPort = 21765
+name = "web"
+paths = ["/"]
+
+[services.development]
+run = "pnpm --filter @workspace/mikrotik-manager run dev"
+
+[services.env]
+PORT = "21765"
+BASE_PATH = "/"
+
+[services.production]
+build = ["pnpm", "--filter", "@workspace/mikrotik-manager", "run", "build"]
+publicDir = "artifacts/mikrotik-manager/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"

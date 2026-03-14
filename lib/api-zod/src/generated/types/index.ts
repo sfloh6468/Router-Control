@@ -6,4 +6,15 @@
  * OpenAPI spec version: 0.1.0
  */
 
+export * from "./commandRequest";
+export * from "./commandResult";
+export * from "./connectionResult";
+export * from "./dhcpLease";
+export * from "./errorResponse";
+export * from "./firewallRule";
 export * from "./healthStatus";
+export * from "./ipAddress";
+export * from "./routerCredentials";
+export * from "./routerInterface";
+export * from "./systemResource";
+export * from "./wirelessClient";

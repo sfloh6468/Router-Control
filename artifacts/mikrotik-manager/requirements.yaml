@@ -1,0 +1,19 @@
+packages:
+  "framer-motion": "For smooth page transitions and interactive animations"
+  "recharts": "For dashboard charts and visual data representation"
+  "clsx": "Utility for constructing className strings conditionally"
+  "tailwind-merge": "Utility function to efficiently merge Tailwind CSS classes"
+  "lucide-react": "Beautiful, consistent icons for the UI"
+  "date-fns": "For formatting timestamps and durations"
+  "@hookform/resolvers": "Zod integration for react-hook-form"
+  "react-hook-form": "For performant, flexible and extensible forms"
+
+images:
+  - path: "artifacts/mikrotik-manager/public/images/network-bg.png"
+    description: "Dark, abstract cyberpunk network topology background with glowing nodes and subtle data lines in deep blue and cyan"
+    aspect_ratio: "16:9"
+
+notes:
+  - Using React Context to store router credentials globally after initial connection
+  - Wrapping Orval's generated fetch functions (getSystemResource, etc.) in TanStack useQuery for optimal data fetching, as the API uses POST for all endpoints to accept credentials
+  - Using dark mode exclusive styling to fit the 'network admin panel' aesthetic

@@ -1,6 +1,5 @@
 openapi: 3.1.0
 info:
-  # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
   description: API specification
@@ -10,6 +9,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: mikrotik
+    description: MikroTik router management
 paths:
   /healthz:
     get:
@@ -24,6 +25,217 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /mikrotik/connect:
+    post:
+      operationId: testConnection
+      tags: [mikrotik]
+      summary: Test router connection
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouterCredentials"
+      responses:
+        "200":
+          description: Connection result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionResult"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mikrotik/system:
+    post:
+      operationId: getSystemResource
+      tags: [mikrotik]
+      summary: Get system resource info
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouterCredentials"
+      responses:
+        "200":
+          description: System resource info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemResource"
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mikrotik/interfaces:
+    post:
+      operationId: getInterfaces
+      tags: [mikrotik]
+      summary: Get network interfaces
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouterCredentials"
+      responses:
+        "200":
+          description: List of interfaces
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RouterInterface"
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mikrotik/ip/addresses:
+    post:
+      operationId: getIpAddresses
+      tags: [mikrotik]
+      summary: Get IP addresses
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouterCredentials"
+      responses:
+        "200":
+          description: List of IP addresses
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IpAddress"
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mikrotik/firewall/rules:
+    post:
+      operationId: getFirewallRules
+      tags: [mikrotik]
+      summary: Get firewall filter rules
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouterCredentials"
+      responses:
+        "200":
+          description: List of firewall rules
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/FirewallRule"
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mikrotik/dhcp/leases:
+    post:
+      operationId: getDhcpLeases
+      tags: [mikrotik]
+      summary: Get DHCP leases
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouterCredentials"
+      responses:
+        "200":
+          description: List of DHCP leases
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/DhcpLease"
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mikrotik/wireless/clients:
+    post:
+      operationId: getWirelessClients
+      tags: [mikrotik]
+      summary: Get wireless registration table
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouterCredentials"
+      responses:
+        "200":
+          description: List of wireless clients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WirelessClient"
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /mikrotik/command:
+    post:
+      operationId: runCommand
+      tags: [mikrotik]
+      summary: Run a RouterOS command
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommandRequest"
+      responses:
+        "200":
+          description: Command output
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandResult"
+        "400":
+          description: Error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +246,211 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    RouterCredentials:
+      type: object
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        username:
+          type: string
+        password:
+          type: string
+      required:
+        - host
+        - username
+        - password
+
+    ConnectionResult:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        routerOs:
+          type: ["string", "null"]
+        routerBoard:
+          type: ["string", "null"]
+      required:
+        - success
+        - message
+
+    SystemResource:
+      type: object
+      properties:
+        uptime:
+          type: ["string", "null"]
+        version:
+          type: ["string", "null"]
+        buildTime:
+          type: ["string", "null"]
+        boardName:
+          type: ["string", "null"]
+        platform:
+          type: ["string", "null"]
+        cpuLoad:
+          type: ["string", "null"]
+        freeMemory:
+          type: ["string", "null"]
+        totalMemory:
+          type: ["string", "null"]
+        freeHddSpace:
+          type: ["string", "null"]
+        totalHddSpace:
+          type: ["string", "null"]
+        cpuCount:
+          type: ["string", "null"]
+        cpuFrequency:
+          type: ["string", "null"]
+        architecture:
+          type: ["string", "null"]
+      required: []
+
+    RouterInterface:
+      type: object
+      properties:
+        id:
+          type: ["string", "null"]
+        name:
+          type: ["string", "null"]
+        type:
+          type: ["string", "null"]
+        mtu:
+          type: ["string", "null"]
+        macAddress:
+          type: ["string", "null"]
+        running:
+          type: ["string", "null"]
+        disabled:
+          type: ["string", "null"]
+        comment:
+          type: ["string", "null"]
+      required: []
+
+    IpAddress:
+      type: object
+      properties:
+        id:
+          type: ["string", "null"]
+        address:
+          type: ["string", "null"]
+        network:
+          type: ["string", "null"]
+        interface:
+          type: ["string", "null"]
+        disabled:
+          type: ["string", "null"]
+        dynamic:
+          type: ["string", "null"]
+        comment:
+          type: ["string", "null"]
+      required: []
+
+    FirewallRule:
+      type: object
+      properties:
+        id:
+          type: ["string", "null"]
+        chain:
+          type: ["string", "null"]
+        action:
+          type: ["string", "null"]
+        protocol:
+          type: ["string", "null"]
+        srcAddress:
+          type: ["string", "null"]
+        dstAddress:
+          type: ["string", "null"]
+        dstPort:
+          type: ["string", "null"]
+        inInterface:
+          type: ["string", "null"]
+        outInterface:
+          type: ["string", "null"]
+        disabled:
+          type: ["string", "null"]
+        comment:
+          type: ["string", "null"]
+      required: []
+
+    DhcpLease:
+      type: object
+      properties:
+        id:
+          type: ["string", "null"]
+        address:
+          type: ["string", "null"]
+        macAddress:
+          type: ["string", "null"]
+        hostname:
+          type: ["string", "null"]
+        status:
+          type: ["string", "null"]
+        expiresAfter:
+          type: ["string", "null"]
+        server:
+          type: ["string", "null"]
+        comment:
+          type: ["string", "null"]
+      required: []
+
+    WirelessClient:
+      type: object
+      properties:
+        id:
+          type: ["string", "null"]
+        interface:
+          type: ["string", "null"]
+        macAddress:
+          type: ["string", "null"]
+        uptime:
+          type: ["string", "null"]
+        signalStrength:
+          type: ["string", "null"]
+        txRate:
+          type: ["string", "null"]
+        rxRate:
+          type: ["string", "null"]
+        ssid:
+          type: ["string", "null"]
+      required: []
+
+    CommandRequest:
+      type: object
+      properties:
+        host:
+          type: string
+        port:
+          type: integer
+        username:
+          type: string
+        password:
+          type: string
+        command:
+          type: string
+      required:
+        - host
+        - username
+        - password
+        - command
+
+    CommandResult:
+      type: object
+      properties:
+        output:
+          type: string
+        success:
+          type: boolean
+      required:
+        - output
+        - success

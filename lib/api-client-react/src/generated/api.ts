@@ -5,18 +5,34 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import type {
+  MutationFunction,
   QueryFunction,
   QueryKey,
+  UseMutationOptions,
+  UseMutationResult,
   UseQueryOptions,
   UseQueryResult,
 } from "@tanstack/react-query";
 
-import type { HealthStatus } from "./api.schemas";
+import type {
+  CommandRequest,
+  CommandResult,
+  ConnectionResult,
+  DhcpLease,
+  ErrorResponse,
+  FirewallRule,
+  HealthStatus,
+  IpAddress,
+  RouterCredentials,
+  RouterInterface,
+  SystemResource,
+  WirelessClient,
+} from "./api.schemas";
 
 import { customFetch } from "../custom-fetch";
-import type { ErrorType } from "../custom-fetch";
+import type { ErrorType, BodyType } from "../custom-fetch";
 
 type AwaitedInput<T> = PromiseLike<T> | T;
 
@@ -99,3 +115,691 @@ export function useHealthCheck<
 
   return { ...query, queryKey: queryOptions.queryKey };
 }
+
+/**
+ * @summary Test router connection
+ */
+export const getTestConnectionUrl = () => {
+  return `/api/mikrotik/connect`;
+};
+
+export const testConnection = async (
+  routerCredentials: RouterCredentials,
+  options?: RequestInit,
+): Promise<ConnectionResult> => {
+  return customFetch<ConnectionResult>(getTestConnectionUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(routerCredentials),
+  });
+};
+
+export const getTestConnectionMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testConnection>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof testConnection>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  const mutationKey = ["testConnection"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof testConnection>>,
+    { data: BodyType<RouterCredentials> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return testConnection(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type TestConnectionMutationResult = NonNullable<
+  Awaited<ReturnType<typeof testConnection>>
+>;
+export type TestConnectionMutationBody = BodyType<RouterCredentials>;
+export type TestConnectionMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Test router connection
+ */
+export const useTestConnection = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof testConnection>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof testConnection>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  return useMutation(getTestConnectionMutationOptions(options));
+};
+
+/**
+ * @summary Get system resource info
+ */
+export const getGetSystemResourceUrl = () => {
+  return `/api/mikrotik/system`;
+};
+
+export const getSystemResource = async (
+  routerCredentials: RouterCredentials,
+  options?: RequestInit,
+): Promise<SystemResource> => {
+  return customFetch<SystemResource>(getGetSystemResourceUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(routerCredentials),
+  });
+};
+
+export const getGetSystemResourceMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getSystemResource>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof getSystemResource>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  const mutationKey = ["getSystemResource"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof getSystemResource>>,
+    { data: BodyType<RouterCredentials> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return getSystemResource(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GetSystemResourceMutationResult = NonNullable<
+  Awaited<ReturnType<typeof getSystemResource>>
+>;
+export type GetSystemResourceMutationBody = BodyType<RouterCredentials>;
+export type GetSystemResourceMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get system resource info
+ */
+export const useGetSystemResource = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getSystemResource>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof getSystemResource>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  return useMutation(getGetSystemResourceMutationOptions(options));
+};
+
+/**
+ * @summary Get network interfaces
+ */
+export const getGetInterfacesUrl = () => {
+  return `/api/mikrotik/interfaces`;
+};
+
+export const getInterfaces = async (
+  routerCredentials: RouterCredentials,
+  options?: RequestInit,
+): Promise<RouterInterface[]> => {
+  return customFetch<RouterInterface[]>(getGetInterfacesUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(routerCredentials),
+  });
+};
+
+export const getGetInterfacesMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getInterfaces>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof getInterfaces>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  const mutationKey = ["getInterfaces"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof getInterfaces>>,
+    { data: BodyType<RouterCredentials> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return getInterfaces(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GetInterfacesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof getInterfaces>>
+>;
+export type GetInterfacesMutationBody = BodyType<RouterCredentials>;
+export type GetInterfacesMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get network interfaces
+ */
+export const useGetInterfaces = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getInterfaces>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof getInterfaces>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  return useMutation(getGetInterfacesMutationOptions(options));
+};
+
+/**
+ * @summary Get IP addresses
+ */
+export const getGetIpAddressesUrl = () => {
+  return `/api/mikrotik/ip/addresses`;
+};
+
+export const getIpAddresses = async (
+  routerCredentials: RouterCredentials,
+  options?: RequestInit,
+): Promise<IpAddress[]> => {
+  return customFetch<IpAddress[]>(getGetIpAddressesUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(routerCredentials),
+  });
+};
+
+export const getGetIpAddressesMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getIpAddresses>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof getIpAddresses>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  const mutationKey = ["getIpAddresses"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof getIpAddresses>>,
+    { data: BodyType<RouterCredentials> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return getIpAddresses(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GetIpAddressesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof getIpAddresses>>
+>;
+export type GetIpAddressesMutationBody = BodyType<RouterCredentials>;
+export type GetIpAddressesMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get IP addresses
+ */
+export const useGetIpAddresses = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getIpAddresses>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof getIpAddresses>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  return useMutation(getGetIpAddressesMutationOptions(options));
+};
+
+/**
+ * @summary Get firewall filter rules
+ */
+export const getGetFirewallRulesUrl = () => {
+  return `/api/mikrotik/firewall/rules`;
+};
+
+export const getFirewallRules = async (
+  routerCredentials: RouterCredentials,
+  options?: RequestInit,
+): Promise<FirewallRule[]> => {
+  return customFetch<FirewallRule[]>(getGetFirewallRulesUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(routerCredentials),
+  });
+};
+
+export const getGetFirewallRulesMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getFirewallRules>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof getFirewallRules>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  const mutationKey = ["getFirewallRules"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof getFirewallRules>>,
+    { data: BodyType<RouterCredentials> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return getFirewallRules(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GetFirewallRulesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof getFirewallRules>>
+>;
+export type GetFirewallRulesMutationBody = BodyType<RouterCredentials>;
+export type GetFirewallRulesMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get firewall filter rules
+ */
+export const useGetFirewallRules = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getFirewallRules>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof getFirewallRules>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  return useMutation(getGetFirewallRulesMutationOptions(options));
+};
+
+/**
+ * @summary Get DHCP leases
+ */
+export const getGetDhcpLeasesUrl = () => {
+  return `/api/mikrotik/dhcp/leases`;
+};
+
+export const getDhcpLeases = async (
+  routerCredentials: RouterCredentials,
+  options?: RequestInit,
+): Promise<DhcpLease[]> => {
+  return customFetch<DhcpLease[]>(getGetDhcpLeasesUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(routerCredentials),
+  });
+};
+
+export const getGetDhcpLeasesMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getDhcpLeases>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof getDhcpLeases>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  const mutationKey = ["getDhcpLeases"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof getDhcpLeases>>,
+    { data: BodyType<RouterCredentials> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return getDhcpLeases(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GetDhcpLeasesMutationResult = NonNullable<
+  Awaited<ReturnType<typeof getDhcpLeases>>
+>;
+export type GetDhcpLeasesMutationBody = BodyType<RouterCredentials>;
+export type GetDhcpLeasesMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get DHCP leases
+ */
+export const useGetDhcpLeases = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getDhcpLeases>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof getDhcpLeases>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  return useMutation(getGetDhcpLeasesMutationOptions(options));
+};
+
+/**
+ * @summary Get wireless registration table
+ */
+export const getGetWirelessClientsUrl = () => {
+  return `/api/mikrotik/wireless/clients`;
+};
+
+export const getWirelessClients = async (
+  routerCredentials: RouterCredentials,
+  options?: RequestInit,
+): Promise<WirelessClient[]> => {
+  return customFetch<WirelessClient[]>(getGetWirelessClientsUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(routerCredentials),
+  });
+};
+
+export const getGetWirelessClientsMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getWirelessClients>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof getWirelessClients>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  const mutationKey = ["getWirelessClients"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof getWirelessClients>>,
+    { data: BodyType<RouterCredentials> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return getWirelessClients(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type GetWirelessClientsMutationResult = NonNullable<
+  Awaited<ReturnType<typeof getWirelessClients>>
+>;
+export type GetWirelessClientsMutationBody = BodyType<RouterCredentials>;
+export type GetWirelessClientsMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Get wireless registration table
+ */
+export const useGetWirelessClients = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof getWirelessClients>>,
+    TError,
+    { data: BodyType<RouterCredentials> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof getWirelessClients>>,
+  TError,
+  { data: BodyType<RouterCredentials> },
+  TContext
+> => {
+  return useMutation(getGetWirelessClientsMutationOptions(options));
+};
+
+/**
+ * @summary Run a RouterOS command
+ */
+export const getRunCommandUrl = () => {
+  return `/api/mikrotik/command`;
+};
+
+export const runCommand = async (
+  commandRequest: CommandRequest,
+  options?: RequestInit,
+): Promise<CommandResult> => {
+  return customFetch<CommandResult>(getRunCommandUrl(), {
+    ...options,
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...options?.headers },
+    body: JSON.stringify(commandRequest),
+  });
+};
+
+export const getRunCommandMutationOptions = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runCommand>>,
+    TError,
+    { data: BodyType<CommandRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationOptions<
+  Awaited<ReturnType<typeof runCommand>>,
+  TError,
+  { data: BodyType<CommandRequest> },
+  TContext
+> => {
+  const mutationKey = ["runCommand"];
+  const { mutation: mutationOptions, request: requestOptions } = options
+    ? options.mutation &&
+      "mutationKey" in options.mutation &&
+      options.mutation.mutationKey
+      ? options
+      : { ...options, mutation: { ...options.mutation, mutationKey } }
+    : { mutation: { mutationKey }, request: undefined };
+
+  const mutationFn: MutationFunction<
+    Awaited<ReturnType<typeof runCommand>>,
+    { data: BodyType<CommandRequest> }
+  > = (props) => {
+    const { data } = props ?? {};
+
+    return runCommand(data, requestOptions);
+  };
+
+  return { mutationFn, ...mutationOptions };
+};
+
+export type RunCommandMutationResult = NonNullable<
+  Awaited<ReturnType<typeof runCommand>>
+>;
+export type RunCommandMutationBody = BodyType<CommandRequest>;
+export type RunCommandMutationError = ErrorType<ErrorResponse>;
+
+/**
+ * @summary Run a RouterOS command
+ */
+export const useRunCommand = <
+  TError = ErrorType<ErrorResponse>,
+  TContext = unknown,
+>(options?: {
+  mutation?: UseMutationOptions<
+    Awaited<ReturnType<typeof runCommand>>,
+    TError,
+    { data: BodyType<CommandRequest> },
+    TContext
+  >;
+  request?: SecondParameter<typeof customFetch>;
+}): UseMutationResult<
+  Awaited<ReturnType<typeof runCommand>>,
+  TError,
+  { data: BodyType<CommandRequest> },
+  TContext
+> => {
+  return useMutation(getRunCommandMutationOptions(options));
+};

@@ -14,3 +14,176 @@ import * as zod from "zod";
 export const HealthCheckResponse = zod.object({
   status: zod.string(),
 });
+
+/**
+ * @summary Test router connection
+ */
+export const TestConnectionBody = zod.object({
+  host: zod.string(),
+  port: zod.number().optional(),
+  username: zod.string(),
+  password: zod.string(),
+});
+
+export const TestConnectionResponse = zod.object({
+  success: zod.boolean(),
+  message: zod.string(),
+  routerOs: zod.string().nullish(),
+  routerBoard: zod.string().nullish(),
+});
+
+/**
+ * @summary Get system resource info
+ */
+export const GetSystemResourceBody = zod.object({
+  host: zod.string(),
+  port: zod.number().optional(),
+  username: zod.string(),
+  password: zod.string(),
+});
+
+export const GetSystemResourceResponse = zod.object({
+  uptime: zod.string().nullish(),
+  version: zod.string().nullish(),
+  buildTime: zod.string().nullish(),
+  boardName: zod.string().nullish(),
+  platform: zod.string().nullish(),
+  cpuLoad: zod.string().nullish(),
+  freeMemory: zod.string().nullish(),
+  totalMemory: zod.string().nullish(),
+  freeHddSpace: zod.string().nullish(),
+  totalHddSpace: zod.string().nullish(),
+  cpuCount: zod.string().nullish(),
+  cpuFrequency: zod.string().nullish(),
+  architecture: zod.string().nullish(),
+});
+
+/**
+ * @summary Get network interfaces
+ */
+export const GetInterfacesBody = zod.object({
+  host: zod.string(),
+  port: zod.number().optional(),
+  username: zod.string(),
+  password: zod.string(),
+});
+
+export const GetInterfacesResponseItem = zod.object({
+  id: zod.string().nullish(),
+  name: zod.string().nullish(),
+  type: zod.string().nullish(),
+  mtu: zod.string().nullish(),
+  macAddress: zod.string().nullish(),
+  running: zod.string().nullish(),
+  disabled: zod.string().nullish(),
+  comment: zod.string().nullish(),
+});
+export const GetInterfacesResponse = zod.array(GetInterfacesResponseItem);
+
+/**
+ * @summary Get IP addresses
+ */
+export const GetIpAddressesBody = zod.object({
+  host: zod.string(),
+  port: zod.number().optional(),
+  username: zod.string(),
+  password: zod.string(),
+});
+
+export const GetIpAddressesResponseItem = zod.object({
+  id: zod.string().nullish(),
+  address: zod.string().nullish(),
+  network: zod.string().nullish(),
+  interface: zod.string().nullish(),
+  disabled: zod.string().nullish(),
+  dynamic: zod.string().nullish(),
+  comment: zod.string().nullish(),
+});
+export const GetIpAddressesResponse = zod.array(GetIpAddressesResponseItem);
+
+/**
+ * @summary Get firewall filter rules
+ */
+export const GetFirewallRulesBody = zod.object({
+  host: zod.string(),
+  port: zod.number().optional(),
+  username: zod.string(),
+  password: zod.string(),
+});
+
+export const GetFirewallRulesResponseItem = zod.object({
+  id: zod.string().nullish(),
+  chain: zod.string().nullish(),
+  action: zod.string().nullish(),
+  protocol: zod.string().nullish(),
+  srcAddress: zod.string().nullish(),
+  dstAddress: zod.string().nullish(),
+  dstPort: zod.string().nullish(),
+  inInterface: zod.string().nullish(),
+  outInterface: zod.string().nullish(),
+  disabled: zod.string().nullish(),
+  comment: zod.string().nullish(),
+});
+export const GetFirewallRulesResponse = zod.array(GetFirewallRulesResponseItem);
+
+/**
+ * @summary Get DHCP leases
+ */
+export const GetDhcpLeasesBody = zod.object({
+  host: zod.string(),
+  port: zod.number().optional(),
+  username: zod.string(),
+  password: zod.string(),
+});
+
+export const GetDhcpLeasesResponseItem = zod.object({
+  id: zod.string().nullish(),
+  address: zod.string().nullish(),
+  macAddress: zod.string().nullish(),
+  hostname: zod.string().nullish(),
+  status: zod.string().nullish(),
+  expiresAfter: zod.string().nullish(),
+  server: zod.string().nullish(),
+  comment: zod.string().nullish(),
+});
+export const GetDhcpLeasesResponse = zod.array(GetDhcpLeasesResponseItem);
+
+/**
+ * @summary Get wireless registration table
+ */
+export const GetWirelessClientsBody = zod.object({
+  host: zod.string(),
+  port: zod.number().optional(),
+  username: zod.string(),
+  password: zod.string(),
+});
+
+export const GetWirelessClientsResponseItem = zod.object({
+  id: zod.string().nullish(),
+  interface: zod.string().nullish(),
+  macAddress: zod.string().nullish(),
+  uptime: zod.string().nullish(),
+  signalStrength: zod.string().nullish(),
+  txRate: zod.string().nullish(),
+  rxRate: zod.string().nullish(),
+  ssid: zod.string().nullish(),
+});
+export const GetWirelessClientsResponse = zod.array(
+  GetWirelessClientsResponseItem,
+);
+
+/**
+ * @summary Run a RouterOS command
+ */
+export const RunCommandBody = zod.object({
+  host: zod.string(),
+  port: zod.number().optional(),
+  username: zod.string(),
+  password: zod.string(),
+  command: zod.string(),
+});
+
+export const RunCommandResponse = zod.object({
+  output: zod.string(),
+  success: zod.boolean(),
+});

@@ -8,3 +8,164 @@
 export interface HealthStatus {
   status: string;
 }
+
+export interface ErrorResponse {
+  error: string;
+}
+
+export interface RouterCredentials {
+  host: string;
+  port?: number;
+  username: string;
+  password: string;
+}
+
+export interface ConnectionResult {
+  success: boolean;
+  message: string;
+  /** @nullable */
+  routerOs?: string | null;
+  /** @nullable */
+  routerBoard?: string | null;
+}
+
+export interface SystemResource {
+  /** @nullable */
+  uptime?: string | null;
+  /** @nullable */
+  version?: string | null;
+  /** @nullable */
+  buildTime?: string | null;
+  /** @nullable */
+  boardName?: string | null;
+  /** @nullable */
+  platform?: string | null;
+  /** @nullable */
+  cpuLoad?: string | null;
+  /** @nullable */
+  freeMemory?: string | null;
+  /** @nullable */
+  totalMemory?: string | null;
+  /** @nullable */
+  freeHddSpace?: string | null;
+  /** @nullable */
+  totalHddSpace?: string | null;
+  /** @nullable */
+  cpuCount?: string | null;
+  /** @nullable */
+  cpuFrequency?: string | null;
+  /** @nullable */
+  architecture?: string | null;
+}
+
+export interface RouterInterface {
+  /** @nullable */
+  id?: string | null;
+  /** @nullable */
+  name?: string | null;
+  /** @nullable */
+  type?: string | null;
+  /** @nullable */
+  mtu?: string | null;
+  /** @nullable */
+  macAddress?: string | null;
+  /** @nullable */
+  running?: string | null;
+  /** @nullable */
+  disabled?: string | null;
+  /** @nullable */
+  comment?: string | null;
+}
+
+export interface IpAddress {
+  /** @nullable */
+  id?: string | null;
+  /** @nullable */
+  address?: string | null;
+  /** @nullable */
+  network?: string | null;
+  /** @nullable */
+  interface?: string | null;
+  /** @nullable */
+  disabled?: string | null;
+  /** @nullable */
+  dynamic?: string | null;
+  /** @nullable */
+  comment?: string | null;
+}
+
+export interface FirewallRule {
+  /** @nullable */
+  id?: string | null;
+  /** @nullable */
+  chain?: string | null;
+  /** @nullable */
+  action?: string | null;
+  /** @nullable */
+  protocol?: string | null;
+  /** @nullable */
+  srcAddress?: string | null;
+  /** @nullable */
+  dstAddress?: string | null;
+  /** @nullable */
+  dstPort?: string | null;
+  /** @nullable */
+  inInterface?: string | null;
+  /** @nullable */
+  outInterface?: string | null;
+  /** @nullable */
+  disabled?: string | null;
+  /** @nullable */
+  comment?: string | null;
+}
+
+export interface DhcpLease {
+  /** @nullable */
+  id?: string | null;
+  /** @nullable */
+  address?: string | null;
+  /** @nullable */
+  macAddress?: string | null;
+  /** @nullable */
+  hostname?: string | null;
+  /** @nullable */
+  status?: string | null;
+  /** @nullable */
+  expiresAfter?: string | null;
+  /** @nullable */
+  server?: string | null;
+  /** @nullable */
+  comment?: string | null;
+}
+
+export interface WirelessClient {
+  /** @nullable */
+  id?: string | null;
+  /** @nullable */
+  interface?: string | null;
+  /** @nullable */
+  macAddress?: string | null;
+  /** @nullable */
+  uptime?: string | null;
+  /** @nullable */
+  signalStrength?: string | null;
+  /** @nullable */
+  txRate?: string | null;
+  /** @nullable */
+  rxRate?: string | null;
+  /** @nullable */
+  ssid?: string | null;
+}
+
+export interface CommandRequest {
+  host: string;
+  port?: number;
+  username: string;
+  password: string;
+  command: string;
+}
+
+export interface CommandResult {
+  output: string;
+  success: boolean;
+}
