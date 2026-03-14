@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { Link, useLocation } from "wouter";
 import { 
   Activity, 
@@ -8,11 +8,14 @@ import {
   Wifi, 
   TerminalSquare, 
   LogOut,
-  Laptop
+  Laptop,
+  Download,
+  Loader2
 } from "lucide-react";
 import { useRouterContext } from "@/lib/router-context";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
+import { toast } from "sonner";
 
 const navItems = [
   { name: "Dashboard", href: "/dashboard", icon: Activity },
@@ -27,6 +30,37 @@ const navItems = [
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { isConnected, credentials, setCredentials } = useRouterContext();
+  const [exporting, setExporting] = useState(false);
+
+  const handleExport = async () => {
+    if (!credentials) return;
+    setExporting(true);
+    try {
+      const res = await fetch("/api/mikrotik/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+      const text = await res.text();
+      const blob = new Blob([text], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      const date = new Date().toISOString().slice(0, 10);
+      a.href = url;
+      a.download = `mikrotik-${credentials.host}-${date}.rsc`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Config downloaded successfully");
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
+  };
 
   if (!isConnected) {
     return <>{children}</>;
@@ -78,7 +112,19 @@ export function Layout({ children }: { children: React.ReactNode }) {
           })}
         </nav>
 
-        <div className="p-4 mt-auto border-t border-border/50">
+        <div className="p-4 mt-auto border-t border-border/50 space-y-1">
+          <button
+            onClick={handleExport}
+            disabled={exporting}
+            className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-sm font-medium text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+          >
+            {exporting ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Download className="h-4 w-4" />
+            )}
+            {exporting ? "Exporting…" : "Download Config"}
+          </button>
           <button
             onClick={() => setCredentials(null)}
             className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-sm font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"

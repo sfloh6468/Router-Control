@@ -432,6 +432,297 @@ router.post("/mikrotik/command", async (req, res): Promise<void> => {
   }
 });
 
+// ─────────────────────────── EXPORT ROUTE ────────────────────────────
+
+// Convert camelCase → dashed-case (routeros-client camelCases all field names)
+function toDashed(key: string): string {
+  return key.replace(/([A-Z])/g, (m) => `-${m.toLowerCase()}`);
+}
+
+// Internal keys to skip when building RSC lines
+const SKIP_KEYS = new Set([".id", "snakeCase", "rosApi", "pathVal", "id"]);
+
+// Fields that are read-only/runtime stats — never go in an RSC export
+const READONLY_KEYS = new Set([
+  "dynamic", "invalid", "running", "active", "status",
+  "actualInterface", "lastLoggedIn", "bytes", "packets",
+  "cacheUsed", "freqDrift", "status",
+]);
+
+function shouldSkipKey(k: string): boolean {
+  if (SKIP_KEYS.has(k)) return true;
+  if (READONLY_KEYS.has(k)) return true;
+  if (k.startsWith("$") || k.startsWith("!")) return true;  // internal library fields
+  return false;
+}
+
+// Format a single record as an "add" line
+function recordToAdd(rec: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(rec)) {
+    if (shouldSkipKey(k) || v == null || v === "") continue;
+    const key = toDashed(k);
+    const val = String(v);
+    // Quote values containing spaces
+    parts.push(val.includes(" ") ? `${key}="${val}"` : `${key}=${val}`);
+  }
+  return `add ${parts.join(" ")}`;
+}
+
+// Safely fetch a menu section — returns [] if the section doesn't exist
+async function safeGet(
+  client: Awaited<ReturnType<RouterOSClient["connect"]>>,
+  path: string
+): Promise<Record<string, unknown>[]> {
+  try {
+    const items = await client.menu(path).get() as Record<string, unknown>[];
+    return items;
+  } catch {
+    return [];
+  }
+}
+
+// Safely fetch a single-record menu (like /ip/dns settings)
+async function safeGetOne(
+  client: Awaited<ReturnType<RouterOSClient["connect"]>>,
+  path: string
+): Promise<Record<string, unknown> | null> {
+  try {
+    const items = await client.menu(path).get() as Record<string, unknown>[];
+    return items[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// Build key=val pairs for a single record (for "set" commands)
+function recordToSetPairs(rec: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const [k, v] of Object.entries(rec)) {
+    if (shouldSkipKey(k) || v == null || v === "") continue;
+    const key = toDashed(k);
+    const val = String(v);
+    parts.push(val.includes(" ") ? `${key}="${val}"` : `${key}=${val}`);
+  }
+  return parts.join(" ");
+}
+
+// Build section block: "/path\nset k=v ...\n" or "/path\nadd ...\nadd ...\n"
+function section(path: string, records: Record<string, unknown>[], isSet = false): string {
+  if (records.length === 0) return "";
+  const lines = [path];
+  if (isSet) {
+    const pairs = recordToSetPairs(records[0]);
+    if (pairs) lines.push(`set ${pairs}`);
+  } else {
+    for (const rec of records) {
+      lines.push(recordToAdd(rec));
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
+router.post("/mikrotik/export", async (req, res): Promise<void> => {
+  const parsed = WriteBase.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { host, port, username, password } = parsed.data;
+  try {
+    const rsc = await withClient(host, port, username, password, async (client) => {
+      const [
+        identity,
+        bridges,
+        bridgePorts,
+        vlans,
+        ipAddresses,
+        ipRoutes,
+        arpEntries,
+        dnsSettings,
+        pools,
+        dhcpServers,
+        dhcpNetworks,
+        dhcpClients,
+        dhcpLeases,
+        natRules,
+        filterRules,
+        mangleRules,
+        rawRules,
+        ntpClient,
+        users,
+      ] = await Promise.all([
+        safeGetOne(client, "/system/identity"),
+        safeGet(client, "/interface/bridge"),
+        safeGet(client, "/interface/bridge/port"),
+        safeGet(client, "/interface/vlan"),
+        safeGet(client, "/ip/address"),
+        safeGet(client, "/ip/route"),
+        safeGet(client, "/ip/arp"),
+        safeGetOne(client, "/ip/dns"),
+        safeGet(client, "/ip/pool"),
+        safeGet(client, "/ip/dhcp-server"),
+        safeGet(client, "/ip/dhcp-server/network"),
+        safeGet(client, "/ip/dhcp-client"),
+        safeGet(client, "/ip/dhcp-server/lease"),
+        safeGet(client, "/ip/firewall/nat"),
+        safeGet(client, "/ip/firewall/filter"),
+        safeGet(client, "/ip/firewall/mangle"),
+        safeGet(client, "/ip/firewall/raw"),
+        safeGetOne(client, "/system/ntp/client"),
+        safeGet(client, "/user"),
+      ]);
+
+      const now = new Date().toISOString().replace("T", " ").slice(0, 19);
+      const identityName = identity ? String(identity["name"] ?? host) : host;
+
+      const parts: string[] = [
+        `# ${now} by MikroTik RouterOS`,
+        `# model = ${identityName}`,
+        "",
+      ];
+
+      // System identity
+      if (identity) {
+        parts.push("/system identity");
+        parts.push(`set name=${String(identity["name"] ?? host)}`);
+        parts.push("");
+      }
+
+      // NTP client
+      if (ntpClient) {
+        const ntpPairs = recordToSetPairs(ntpClient);
+        if (ntpPairs) {
+          parts.push("/system ntp client");
+          parts.push(`set ${ntpPairs}`);
+          parts.push("");
+        }
+      }
+
+      // Bridge interfaces
+      if (bridges.length > 0) {
+        parts.push(section("/interface bridge", bridges));
+        parts.push("");
+      }
+
+      // Bridge ports
+      if (bridgePorts.length > 0) {
+        parts.push(section("/interface bridge port", bridgePorts));
+        parts.push("");
+      }
+
+      // VLANs
+      if (vlans.length > 0) {
+        parts.push(section("/interface vlan", vlans));
+        parts.push("");
+      }
+
+      // IP pools
+      if (pools.length > 0) {
+        parts.push(section("/ip pool", pools));
+        parts.push("");
+      }
+
+      // DHCP server
+      if (dhcpServers.length > 0) {
+        parts.push(section("/ip dhcp-server", dhcpServers));
+        parts.push("");
+      }
+
+      // DHCP server networks
+      if (dhcpNetworks.length > 0) {
+        parts.push(section("/ip dhcp-server network", dhcpNetworks));
+        parts.push("");
+      }
+
+      // DHCP client
+      if (dhcpClients.length > 0) {
+        parts.push(section("/ip dhcp-client", dhcpClients));
+        parts.push("");
+      }
+
+      // Static DHCP leases only
+      const staticLeases = dhcpLeases.filter((l) => l["addressType"] === "static" || l["dynamic"] === "false" || l["dynamic"] === false);
+      if (staticLeases.length > 0) {
+        parts.push(section("/ip dhcp-server lease", staticLeases));
+        parts.push("");
+      }
+
+      // IP addresses (static only)
+      const staticAddresses = ipAddresses.filter(
+        (a) => a["dynamic"] !== "true" && a["dynamic"] !== true
+      );
+      if (staticAddresses.length > 0) {
+        parts.push(section("/ip address", staticAddresses));
+        parts.push("");
+      }
+
+      // IP routes (static only — skip dynamic/connected)
+      const staticRoutes = ipRoutes.filter(
+        (r) => r["dynamic"] !== "true" && r["dynamic"] !== true
+      );
+      if (staticRoutes.length > 0) {
+        parts.push(section("/ip route", staticRoutes));
+        parts.push("");
+      }
+
+      // ARP (static only)
+      const staticArp = arpEntries.filter((a) => a["dynamic"] !== "true" && a["dynamic"] !== true);
+      if (staticArp.length > 0) {
+        parts.push(section("/ip arp", staticArp));
+        parts.push("");
+      }
+
+      // DNS
+      if (dnsSettings) {
+        const dnsPairs = recordToSetPairs(dnsSettings);
+        if (dnsPairs) {
+          parts.push("/ip dns");
+          parts.push(`set ${dnsPairs}`);
+          parts.push("");
+        }
+      }
+
+      // Firewall NAT
+      if (natRules.length > 0) {
+        parts.push(section("/ip firewall nat", natRules));
+        parts.push("");
+      }
+
+      // Firewall filter
+      if (filterRules.length > 0) {
+        parts.push(section("/ip firewall filter", filterRules));
+        parts.push("");
+      }
+
+      // Firewall mangle
+      if (mangleRules.length > 0) {
+        parts.push(section("/ip firewall mangle", mangleRules));
+        parts.push("");
+      }
+
+      // Firewall raw
+      if (rawRules.length > 0) {
+        parts.push(section("/ip firewall raw", rawRules));
+        parts.push("");
+      }
+
+      // Users (skip admin to avoid overwriting)
+      const nonAdminUsers = users.filter((u) => u["name"] !== "admin");
+      if (nonAdminUsers.length > 0) {
+        parts.push(section("/user", nonAdminUsers));
+        parts.push("");
+      }
+
+      return parts.join("\n");
+    });
+
+    const timestamp = new Date().toISOString().slice(0, 10);
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="mikrotik-${host}-${timestamp}.rsc"`);
+    res.send(rsc);
+  } catch (err) {
+    res.status(400).json({ error: errMsg(err) });
+  }
+});
+
 // ─────────────────────────── WRITE ROUTES ───────────────────────────
 
 // ---- Interfaces ----
