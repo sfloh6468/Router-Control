@@ -57,6 +57,11 @@ async function withClient<T>(
   }
 }
 
+// routeros-client transforms all field names to camelCase and strips leading dots:
+//   board-name  → boardName
+//   cpu-count   → cpuCount
+//   .id         → id
+// Also parses numeric strings to numbers and "true"/"false" to booleans.
 function str(val: unknown): string | null {
   if (val == null) return null;
   return String(val);
@@ -84,11 +89,12 @@ router.post("/mikrotik/connect", async (req, res): Promise<void> => {
       const data = await client.menu("/system/resource").getOnly();
       return data;
     });
+    const d = result as Record<string, unknown>;
     res.json({
       success: true,
       message: "Connected successfully",
-      routerOs: str((result as Record<string, unknown>)["version"]),
-      routerBoard: str((result as Record<string, unknown>)["board-name"]),
+      routerOs: str(d["version"]),
+      routerBoard: str(d["boardName"]),
     });
   } catch (err) {
     res.status(400).json({ error: errMsg(err) });
@@ -109,17 +115,17 @@ router.post("/mikrotik/system", async (req, res): Promise<void> => {
     res.json({
       uptime: str(d["uptime"]),
       version: str(d["version"]),
-      buildTime: str(d["build-time"]),
-      boardName: str(d["board-name"]),
+      buildTime: str(d["buildTime"]),
+      boardName: str(d["boardName"]),
       platform: str(d["platform"]),
-      cpuLoad: str(d["cpu-load"]),
-      freeMemory: str(d["free-memory"]),
-      totalMemory: str(d["total-memory"]),
-      freeHddSpace: str(d["free-hdd-space"]),
-      totalHddSpace: str(d["total-hdd-space"]),
-      cpuCount: str(d["cpu-count"]),
-      cpuFrequency: str(d["cpu-frequency"]),
-      architecture: str(d["architecture-name"]),
+      cpuLoad: str(d["cpuLoad"]),
+      freeMemory: str(d["freeMemory"]),
+      totalMemory: str(d["totalMemory"]),
+      freeHddSpace: str(d["freeHddSpace"]),
+      totalHddSpace: str(d["totalHddSpace"]),
+      cpuCount: str(d["cpuCount"]),
+      cpuFrequency: str(d["cpuFrequency"]),
+      architecture: str(d["architectureName"]),
     });
   } catch (err) {
     res.status(400).json({ error: errMsg(err) });
@@ -139,11 +145,11 @@ router.post("/mikrotik/interfaces", async (req, res): Promise<void> => {
     });
     res.json(
       items.map((d) => ({
-        id: str(d[".id"]),
+        id: str(d["id"]),
         name: str(d["name"]),
         type: str(d["type"]),
         mtu: str(d["mtu"]),
-        macAddress: str(d["mac-address"]),
+        macAddress: str(d["macAddress"]),
         running: str(d["running"]),
         disabled: str(d["disabled"]),
         comment: str(d["comment"]),
@@ -167,7 +173,7 @@ router.post("/mikrotik/ip/addresses", async (req, res): Promise<void> => {
     });
     res.json(
       items.map((d) => ({
-        id: str(d[".id"]),
+        id: str(d["id"]),
         address: str(d["address"]),
         network: str(d["network"]),
         interface: str(d["interface"]),
@@ -194,15 +200,15 @@ router.post("/mikrotik/firewall/rules", async (req, res): Promise<void> => {
     });
     res.json(
       items.map((d) => ({
-        id: str(d[".id"]),
+        id: str(d["id"]),
         chain: str(d["chain"]),
         action: str(d["action"]),
         protocol: str(d["protocol"]),
-        srcAddress: str(d["src-address"]),
-        dstAddress: str(d["dst-address"]),
-        dstPort: str(d["dst-port"]),
-        inInterface: str(d["in-interface"]),
-        outInterface: str(d["out-interface"]),
+        srcAddress: str(d["srcAddress"]),
+        dstAddress: str(d["dstAddress"]),
+        dstPort: str(d["dstPort"]),
+        inInterface: str(d["inInterface"]),
+        outInterface: str(d["outInterface"]),
         disabled: str(d["disabled"]),
         comment: str(d["comment"]),
       }))
@@ -225,12 +231,12 @@ router.post("/mikrotik/dhcp/leases", async (req, res): Promise<void> => {
     });
     res.json(
       items.map((d) => ({
-        id: str(d[".id"]),
+        id: str(d["id"]),
         address: str(d["address"]),
-        macAddress: str(d["mac-address"]),
-        hostname: str(d["host-name"]),
+        macAddress: str(d["macAddress"]),
+        hostname: str(d["hostName"]),
         status: str(d["status"]),
-        expiresAfter: str(d["expires-after"]),
+        expiresAfter: str(d["expiresAfter"]),
         server: str(d["server"]),
         comment: str(d["comment"]),
       }))
@@ -253,13 +259,13 @@ router.post("/mikrotik/wireless/clients", async (req, res): Promise<void> => {
     });
     res.json(
       items.map((d) => ({
-        id: str(d[".id"]),
+        id: str(d["id"]),
         interface: str(d["interface"]),
-        macAddress: str(d["mac-address"]),
+        macAddress: str(d["macAddress"]),
         uptime: str(d["uptime"]),
-        signalStrength: str(d["signal-strength"]),
-        txRate: str(d["tx-rate"]),
-        rxRate: str(d["rx-rate"]),
+        signalStrength: str(d["signalStrength"]),
+        txRate: str(d["txRate"]),
+        rxRate: str(d["rxRate"]),
         ssid: str(d["ssid"]),
       }))
     );

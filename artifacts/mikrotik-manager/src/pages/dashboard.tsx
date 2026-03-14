@@ -86,8 +86,8 @@ export default function DashboardPage() {
             />
             <StatCard 
               title="CPU Info" 
-              value={`${sys.cpuCount} Cores`} 
-              subtitle={`${sys.cpuFrequency} MHz`}
+              value={sys.cpuCount ? `${sys.cpuCount} Cores` : "N/A"} 
+              subtitle={sys.cpuFrequency ? `${sys.cpuFrequency} MHz` : null}
               icon={<Cpu className="h-5 w-5 text-primary" />} 
               delay={0.4}
             />
