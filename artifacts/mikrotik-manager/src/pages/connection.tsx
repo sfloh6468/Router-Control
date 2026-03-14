@@ -1,7 +1,7 @@
-import React, { useState } from "react";
+import React from "react";
 import { useLocation } from "wouter";
 import { motion } from "framer-motion";
-import { Activity, Shield, Router as RouterIcon, CheckCircle2 } from "lucide-react";
+import { Activity, Shield, Router as RouterIcon, CheckCircle2, Info, AlertTriangle } from "lucide-react";
 import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -9,11 +9,10 @@ import { useRouterContext } from "@/lib/router-context";
 import { useMikrotikConnect } from "@/hooks/use-mikrotik";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useToast } from "@/components/ui/toast"; // assuming a simplified toast or use standard fallback
 
 const connectionSchema = z.object({
   host: z.string().min(1, "IP/Hostname is required"),
-  port: z.coerce.number().optional().default(443),
+  port: z.coerce.number().optional().default(8729),
   username: z.string().min(1, "Username is required"),
   password: z.string()
 });
@@ -29,7 +28,7 @@ export default function ConnectionPage() {
     resolver: zodResolver(connectionSchema),
     defaultValues: {
       host: "",
-      port: 443,
+      port: 8729,
       username: "admin",
       password: ""
     }
@@ -100,8 +99,24 @@ export default function ConnectionPage() {
                 <Input 
                   {...form.register("port")} 
                   className="bg-black/20 border-white/10 text-white font-mono text-center focus:border-primary/50" 
-                  placeholder="443"
+                  placeholder="8729"
                 />
+              </div>
+            </div>
+
+            {/* Port reference guide */}
+            <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs space-y-1.5">
+              <div className="flex items-center gap-1.5 text-blue-400 font-medium">
+                <Info className="h-3.5 w-3.5 shrink-0" />
+                Port Reference (MikroTik IP Services)
+              </div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground">
+                <span><span className="font-mono text-white/80">8729</span> — API-SSL <span className="text-green-400">★ Recommended</span></span>
+                <span><span className="font-mono text-white/80">8728</span> — API (no TLS)</span>
+              </div>
+              <div className="text-yellow-400/80 flex items-start gap-1.5 mt-1">
+                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                If you get a timeout, your router firewall may be blocking port 8729 externally. Add a firewall rule: <span className="font-mono">/ip firewall filter add chain=input protocol=tcp dst-port=8729 action=accept</span>
               </div>
             </div>
 
