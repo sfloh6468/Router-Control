@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "3hsJ4b0yAf0RSlou_5lP4"
+uri = "file://mikrotik-config-2026-03-14.txt"
+type = "text"
+title = "MikroTik Config — 175.139.250.90"
