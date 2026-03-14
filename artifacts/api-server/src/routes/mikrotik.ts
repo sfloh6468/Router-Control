@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import axios, { AxiosError } from "axios";
 import https from "https";
+import crypto from "crypto";
 import {
   TestConnectionBody,
   GetSystemResourceBody,
@@ -14,7 +15,31 @@ import {
 
 const router: IRouter = Router();
 
-const httpsAgent = new https.Agent({ rejectUnauthorized: false });
+const httpsAgent = new https.Agent({
+  rejectUnauthorized: false,
+  minVersion: "TLSv1" as "TLSv1",
+  ciphers: [
+    "TLS_AES_128_GCM_SHA256",
+    "TLS_AES_256_GCM_SHA384",
+    "TLS_CHACHA20_POLY1305_SHA256",
+    "ECDHE-RSA-AES128-GCM-SHA256",
+    "ECDHE-RSA-AES256-GCM-SHA384",
+    "ECDHE-RSA-AES128-SHA256",
+    "ECDHE-RSA-AES256-SHA384",
+    "ECDHE-RSA-AES128-SHA",
+    "ECDHE-RSA-AES256-SHA",
+    "AES128-GCM-SHA256",
+    "AES256-GCM-SHA384",
+    "AES128-SHA256",
+    "AES256-SHA256",
+    "AES128-SHA",
+    "AES256-SHA",
+    "DES-CBC3-SHA",
+  ].join(":"),
+  secureOptions:
+    crypto.constants.SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION |
+    crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT,
+});
 
 function mkAxios(host: string, port: number | undefined, username: string, password: string) {
   const portNum = port ?? 443;
