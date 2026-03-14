@@ -97,9 +97,16 @@ React + Vite frontend for managing MikroTik routers. Dark-mode professional netw
 
 - Pages: connection, dashboard, interfaces, ip-addresses, firewall, dhcp, wireless, terminal
 - State: `src/lib/router-context.tsx` stores credentials and current route
-- Hooks: `src/hooks/use-mikrotik.ts` wraps generated API hooks with credential injection
+- Hooks: `src/hooks/use-mikrotik.ts` wraps generated API hooks with credential injection AND write mutations
 - Entry: `src/main.tsx`
 - Dev: `pnpm --filter @workspace/mikrotik-manager run dev`
+
+**Write capabilities (non-OpenAPI, direct fetch):**
+- Interfaces: enable/disable toggle, inline comment edit
+- IP Addresses: add (dialog), remove (confirm), enable/disable toggle
+- Firewall: add rule (dialog), remove (confirm), enable/disable toggle
+- DHCP Leases: remove (confirm), make-static
+- Terminal: full RouterOS command support — print, add, set, remove, enable, disable (index or .id)
 
 ### `scripts` (`@workspace/scripts`)
 

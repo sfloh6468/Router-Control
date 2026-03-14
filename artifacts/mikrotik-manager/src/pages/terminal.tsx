@@ -11,6 +11,7 @@ interface HistoryEntry {
 }
 
 const COMMAND_SUGGESTIONS = [
+  // Read
   "/ip address print",
   "/ip route print",
   "/interface print",
@@ -18,9 +19,22 @@ const COMMAND_SUGGESTIONS = [
   "/ip dhcp-server lease print",
   "/system resource print",
   "/system identity print",
-  "/interface wireless registration-table print",
   "/ip neighbor print",
   "/log print",
+  "/ip dns print",
+  // Write examples
+  "/ip address add address=192.168.10.1/24 interface=ether2",
+  "/ip address remove 0",
+  "/ip address disable 0",
+  "/ip address enable 0",
+  "/interface disable ether2",
+  "/interface enable ether2",
+  "/ip firewall filter add chain=input action=drop src-address=1.2.3.4",
+  "/ip firewall filter disable 0",
+  "/ip firewall filter remove 0",
+  "/system identity set name=MyRouter",
+  "/ip dns set servers=8.8.8.8,8.8.4.4",
+  "/ip route add dst-address=0.0.0.0/0 gateway=192.168.1.1",
 ];
 
 export default function TerminalPage() {

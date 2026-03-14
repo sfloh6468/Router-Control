@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { z } from "zod";
 import { RouterOSClient } from "routeros-client";
 import {
   TestConnectionBody,
@@ -76,6 +77,16 @@ function errMsg(err: unknown): string {
   console.error("[mikrotik] Error:", s);
   return s;
 }
+
+// Base credentials schema used for write operations
+const WriteBase = z.object({
+  host: z.string(),
+  port: z.number().optional(),
+  username: z.string(),
+  password: z.string(),
+});
+
+// ─────────────────────────── READ ROUTES ───────────────────────────
 
 router.post("/mikrotik/connect", async (req, res): Promise<void> => {
   const parsed = TestConnectionBody.safeParse(req.body);
@@ -274,6 +285,136 @@ router.post("/mikrotik/wireless/clients", async (req, res): Promise<void> => {
   }
 });
 
+// ─────────────────────────── TERMINAL ROUTE ───────────────────────────
+
+/**
+ * Full RouterOS command parser supporting:
+ *   /menu/path print
+ *   /menu/path add key=val key=val
+ *   /menu/path set 0 key=val      (index-based)
+ *   /menu/path set *1 key=val     (.id-based)
+ *   /menu/path remove 0
+ *   /menu/path enable 0
+ *   /menu/path disable 0
+ */
+async function executeRosCommand(
+  client: Awaited<ReturnType<RouterOSClient["connect"]>>,
+  command: string
+): Promise<string> {
+  const trimmed = command.trim();
+  if (!trimmed || trimmed.startsWith("#")) return "";
+
+  const parts = trimmed.split(/\s+/);
+  const SUB_CMDS = new Set(["add", "set", "remove", "delete", "print", "get", "enable", "disable", "move", "export"]);
+
+  // Find where the sub-command begins
+  let cmdIdx = parts.length;
+  for (let i = 0; i < parts.length; i++) {
+    const w = parts[i].toLowerCase().replace(/^\//, "");
+    if (SUB_CMDS.has(w)) {
+      cmdIdx = i;
+      break;
+    }
+  }
+
+  // Build the menu path
+  const pathParts = parts.slice(0, cmdIdx);
+  let menuPath = pathParts.join("/").replace(/\/\//g, "/");
+  if (!menuPath.startsWith("/")) menuPath = "/" + menuPath;
+
+  const subCmd = cmdIdx < parts.length
+    ? parts[cmdIdx].toLowerCase().replace(/^\//, "")
+    : "print";
+
+  const argParts = parts.slice(cmdIdx + 1);
+
+  // Parse arguments
+  const args: Record<string, string> = {};
+  let idArg: string | number | undefined;
+  const whereArgs: Record<string, string> = {};
+  let inFind = false;
+
+  for (const part of argParts) {
+    if (part === "[find" || part === "[find]" || part === "find") { inFind = true; continue; }
+    if (part === "]") { inFind = false; continue; }
+    // Bare RouterOS .id like *1A
+    if (/^\*[0-9a-fA-F]+$/.test(part)) { idArg = part; continue; }
+    // Bare number = positional index
+    if (/^\d+$/.test(part)) { idArg = parseInt(part, 10); continue; }
+    const match = part.match(/^=?([^=]+)=(.*)$/);
+    if (match) {
+      const key = match[1]; const val = match[2];
+      if (key === ".id" || key === "id") { idArg = val; }
+      else if (inFind) { whereArgs[key] = val; }
+      else { args[key] = val; }
+    }
+  }
+
+  const menu = client.menu(menuPath);
+
+  switch (subCmd) {
+    case "print":
+    case "get": {
+      try {
+        const filter = Object.keys(whereArgs).length > 0 ? whereArgs : undefined;
+        const data = await menu.get(filter);
+        if (!Array.isArray(data) || data.length === 0) return "(no entries)";
+        // Pretty-print as numbered list
+        return (data as Record<string, unknown>[])
+          .map((item, i) => {
+            const lines = Object.entries(item).map(([k, v]) => `  ${k}=${v}`);
+            return `[${i}]\n${lines.join("\n")}`;
+          })
+          .join("\n\n");
+      } catch {
+        try {
+          const data = await menu.getOnly();
+          const lines = Object.entries(data as Record<string, unknown>).map(([k, v]) => `  ${k}=${v}`);
+          return lines.join("\n");
+        } catch (e2) {
+          throw e2;
+        }
+      }
+    }
+    case "add": {
+      const result = await menu.add(args);
+      return `Added successfully.\n  .id=${(result as Record<string, unknown>)?.id ?? JSON.stringify(result)}`;
+    }
+    case "set": {
+      if (idArg !== undefined) {
+        await (menu as any).update(args, idArg);
+        return `Updated ${idArg} successfully.`;
+      } else {
+        // No ID — update entire menu (e.g. /system identity set name=X)
+        await (menu as any).update(args);
+        return `Updated successfully.`;
+      }
+    }
+    case "remove":
+    case "delete": {
+      if (idArg === undefined) throw new Error("remove requires an ID or index (e.g. remove 0 or remove *1A)");
+      await (menu as any).remove(idArg);
+      return `Removed ${idArg} successfully.`;
+    }
+    case "enable": {
+      if (idArg === undefined) throw new Error("enable requires an ID or index");
+      await (menu as any).enable(idArg);
+      return `Enabled ${idArg} successfully.`;
+    }
+    case "disable": {
+      if (idArg === undefined) throw new Error("disable requires an ID or index");
+      await (menu as any).disable(idArg);
+      return `Disabled ${idArg} successfully.`;
+    }
+    case "export": {
+      const data = await menu.get();
+      return JSON.stringify(data, null, 2);
+    }
+    default:
+      return `"${subCmd}" is not supported. Supported: print, add, set, remove, enable, disable, export`;
+  }
+}
+
 router.post("/mikrotik/command", async (req, res): Promise<void> => {
   const parsed = RunCommandBody.safeParse(req.body);
   if (!parsed.success) {
@@ -283,28 +424,166 @@ router.post("/mikrotik/command", async (req, res): Promise<void> => {
   const { host, port, username, password, command } = parsed.data;
   try {
     const result = await withClient(host, port, username, password, async (client) => {
-      const trimmed = command.trim().replace(/\s+/g, " ");
-      const parts = trimmed.split(" ");
-      const menuPath = parts[0];
-      const subCmd = parts[1] ?? "print";
-      const menu = client.menu(menuPath);
-
-      if (subCmd === "print" || subCmd === "get") {
-        try {
-          const data = await menu.get();
-          return JSON.stringify(data, null, 2);
-        } catch {
-          const data = await menu.getOnly();
-          return JSON.stringify(data, null, 2);
-        }
-      }
-
-      return `Command "${command}" executed. Use format: /path/to/menu print`;
+      return executeRosCommand(client, command);
     });
     res.json({ output: result as string, success: true });
   } catch (err) {
     res.json({ output: `Error: ${errMsg(err)}`, success: false });
   }
+});
+
+// ─────────────────────────── WRITE ROUTES ───────────────────────────
+
+// ---- Interfaces ----
+router.post("/mikrotik/interface/toggle", async (req, res): Promise<void> => {
+  const parsed = WriteBase.extend({ id: z.string(), disabled: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { host, port, username, password, id, disabled } = parsed.data;
+  try {
+    await withClient(host, port, username, password, async (client) => {
+      const menu = client.menu("/interface") as any;
+      if (disabled) { await menu.disable(id); } else { await menu.enable(id); }
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(400).json({ error: errMsg(err) }); }
+});
+
+router.post("/mikrotik/interface/comment", async (req, res): Promise<void> => {
+  const parsed = WriteBase.extend({ id: z.string(), comment: z.string() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { host, port, username, password, id, comment } = parsed.data;
+  try {
+    await withClient(host, port, username, password, async (client) => {
+      await (client.menu("/interface") as any).update({ comment }, id);
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(400).json({ error: errMsg(err) }); }
+});
+
+// ---- IP Addresses ----
+router.post("/mikrotik/ip/address/add", async (req, res): Promise<void> => {
+  const parsed = WriteBase.extend({
+    address: z.string(),
+    interface: z.string(),
+    comment: z.string().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { host, port, username, password, address, interface: iface, comment } = parsed.data;
+  try {
+    const result = await withClient(host, port, username, password, async (client) => {
+      return client.menu("/ip/address").add({
+        address,
+        interface: iface,
+        ...(comment ? { comment } : {}),
+      });
+    });
+    res.json({ success: true, id: (result as Record<string, unknown>)?.id });
+  } catch (err) { res.status(400).json({ error: errMsg(err) }); }
+});
+
+router.post("/mikrotik/ip/address/remove", async (req, res): Promise<void> => {
+  const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { host, port, username, password, id } = parsed.data;
+  try {
+    await withClient(host, port, username, password, async (client) => {
+      await (client.menu("/ip/address") as any).remove(id);
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(400).json({ error: errMsg(err) }); }
+});
+
+router.post("/mikrotik/ip/address/toggle", async (req, res): Promise<void> => {
+  const parsed = WriteBase.extend({ id: z.string(), disabled: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { host, port, username, password, id, disabled } = parsed.data;
+  try {
+    await withClient(host, port, username, password, async (client) => {
+      const menu = client.menu("/ip/address") as any;
+      if (disabled) { await menu.disable(id); } else { await menu.enable(id); }
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(400).json({ error: errMsg(err) }); }
+});
+
+// ---- Firewall Filter Rules ----
+router.post("/mikrotik/firewall/filter/add", async (req, res): Promise<void> => {
+  const parsed = WriteBase.extend({
+    chain: z.string(),
+    action: z.string(),
+    protocol: z.string().optional(),
+    srcAddress: z.string().optional(),
+    dstAddress: z.string().optional(),
+    dstPort: z.string().optional(),
+    inInterface: z.string().optional(),
+    comment: z.string().optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { host, port, username, password, chain, action, protocol, srcAddress, dstAddress, dstPort, inInterface, comment } = parsed.data;
+  try {
+    const result = await withClient(host, port, username, password, async (client) => {
+      const entry: Record<string, string> = { chain, action };
+      if (protocol) entry["protocol"] = protocol;
+      if (srcAddress) entry["src-address"] = srcAddress;
+      if (dstAddress) entry["dst-address"] = dstAddress;
+      if (dstPort) entry["dst-port"] = dstPort;
+      if (inInterface) entry["in-interface"] = inInterface;
+      if (comment) entry["comment"] = comment;
+      return client.menu("/ip/firewall/filter").add(entry);
+    });
+    res.json({ success: true, id: (result as Record<string, unknown>)?.id });
+  } catch (err) { res.status(400).json({ error: errMsg(err) }); }
+});
+
+router.post("/mikrotik/firewall/filter/remove", async (req, res): Promise<void> => {
+  const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { host, port, username, password, id } = parsed.data;
+  try {
+    await withClient(host, port, username, password, async (client) => {
+      await (client.menu("/ip/firewall/filter") as any).remove(id);
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(400).json({ error: errMsg(err) }); }
+});
+
+router.post("/mikrotik/firewall/filter/toggle", async (req, res): Promise<void> => {
+  const parsed = WriteBase.extend({ id: z.string(), disabled: z.boolean() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { host, port, username, password, id, disabled } = parsed.data;
+  try {
+    await withClient(host, port, username, password, async (client) => {
+      const menu = client.menu("/ip/firewall/filter") as any;
+      if (disabled) { await menu.disable(id); } else { await menu.enable(id); }
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(400).json({ error: errMsg(err) }); }
+});
+
+// ---- DHCP Leases ----
+router.post("/mikrotik/dhcp/lease/remove", async (req, res): Promise<void> => {
+  const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { host, port, username, password, id } = parsed.data;
+  try {
+    await withClient(host, port, username, password, async (client) => {
+      await (client.menu("/ip/dhcp-server/lease") as any).remove(id);
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(400).json({ error: errMsg(err) }); }
+});
+
+router.post("/mikrotik/dhcp/lease/make-static", async (req, res): Promise<void> => {
+  const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const { host, port, username, password, id } = parsed.data;
+  try {
+    await withClient(host, port, username, password, async (client) => {
+      // RouterOS make-static command
+      await (client.menu("/ip/dhcp-server/lease") as any).update({ "make-static": "yes" }, id);
+    });
+    res.json({ success: true });
+  } catch (err) { res.status(400).json({ error: errMsg(err) }); }
 });
 
 export default router;
