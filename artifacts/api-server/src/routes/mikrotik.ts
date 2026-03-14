@@ -41,9 +41,11 @@ const httpsAgent = new https.Agent({
     crypto.constants.SSL_OP_LEGACY_SERVER_CONNECT,
 });
 
+const HTTP_PORTS = [80, 8080, 8000, 8088, 58080, 58000];
+
 function mkAxios(host: string, port: number | undefined, username: string, password: string) {
-  const portNum = port ?? 443;
-  const protocol = portNum === 80 || portNum === 8080 ? "http" : "https";
+  const portNum = port ?? 80;
+  const protocol = HTTP_PORTS.includes(portNum) ? "http" : "https";
   const baseURL = `${protocol}://${host}:${portNum}/rest`;
   return axios.create({
     baseURL,
