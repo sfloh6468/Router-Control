@@ -23,7 +23,12 @@ function makeClient(host: string, port: number | undefined, username: string, pa
     user: username,
     password,
     port: portNum,
-    tls: useTls ? { rejectUnauthorized: false } : undefined,
+    tls: useTls ? {
+      rejectUnauthorized: false,
+      // MikroTik API SSL uses ADH (Anonymous Diffie-Hellman) ciphers
+      // which are disabled in OpenSSL 3 by default — must allow them explicitly
+      ciphers: "ADH:@SECLEVEL=0",
+    } : undefined,
     timeout: 10,
   });
 }
@@ -58,8 +63,13 @@ function str(val: unknown): string | null {
 }
 
 function errMsg(err: unknown): string {
-  if (err instanceof Error) return err.message;
-  return String(err);
+  if (err instanceof Error) {
+    console.error("[mikrotik] Error:", err.message, err.stack);
+    return err.message;
+  }
+  const s = String(err);
+  console.error("[mikrotik] Error:", s);
+  return s;
 }
 
 router.post("/mikrotik/connect", async (req, res): Promise<void> => {

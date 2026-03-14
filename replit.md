@@ -91,6 +91,24 @@ Generated Zod schemas from the OpenAPI spec (e.g. `HealthCheckResponse`). Used b
 
 Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHealthCheck`, `healthCheck`).
 
+### `artifacts/mikrotik-manager` (`@workspace/mikrotik-manager`)
+
+React + Vite frontend for managing MikroTik routers. Dark-mode professional network admin UI. Mounted at `/` (preview path `/`).
+
+- Pages: connection, dashboard, interfaces, ip-addresses, firewall, dhcp, wireless, terminal
+- State: `src/lib/router-context.tsx` stores credentials and current route
+- Hooks: `src/hooks/use-mikrotik.ts` wraps generated API hooks with credential injection
+- Entry: `src/main.tsx`
+- Dev: `pnpm --filter @workspace/mikrotik-manager run dev`
+
 ### `scripts` (`@workspace/scripts`)
 
 Utility scripts package. Each script is a `.ts` file in `src/` with a corresponding npm script in `package.json`. Run scripts via `pnpm --filter @workspace/scripts run <script>`. Scripts can import any workspace package (e.g., `@workspace/db`) by adding it as a dependency in `scripts/package.json`.
+
+## MikroTik Connectivity Notes
+
+- Router runs **RouterOS v7.8** on IP `175.139.250.90`
+- API SSL port `8729` is open and reachable; plain API port `8728` is ECONNREFUSED from external
+- **Critical TLS fix**: MikroTik's API SSL uses **ADH (Anonymous Diffie-Hellman)** ciphers (`ADH-AES256-SHA256`). OpenSSL 3.0 disables ADH by default. Must pass `ciphers: "ADH:@SECLEVEL=0"` to `tls.connect()` options in the `routeros-client` config.
+- The REST API on port 58080 (HTTP) returns 404 — it likely requires HTTPS. HTTPS also fails due to the same ADH cipher issue in openssl s_client, but works via `routeros-client` with the fix above.
+- Backend routes: `artifacts/api-server/src/routes/mikrotik.ts` — all API calls go through `withClient()` which opens and closes a binary API connection per request.
