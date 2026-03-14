@@ -15,7 +15,7 @@ import {
 import { motion } from "framer-motion";
 
 export default function WirelessClientsPage() {
-  const { data: clients, isLoading, refetch, isFetching } = useMikrotikWirelessClients();
+  const { data: clients, isLoading, error, refetch, isFetching } = useMikrotikWirelessClients();
 
   const getSignalIcon = (signal: string | null | undefined) => {
     if (!signal) return <Signal className="h-4 w-4 text-muted-foreground" />;
@@ -40,6 +40,13 @@ export default function WirelessClientsPage() {
           Refresh
         </Button>
       </div>
+
+      {error && (
+        <div className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-400 text-sm flex items-center gap-2">
+          <Wifi className="h-4 w-4 shrink-0" />
+          <span>Wireless package may not be installed or enabled on this router. ({error.message})</span>
+        </div>
+      )}
 
       <Card className="flex-1 min-h-0 bg-card/60 backdrop-blur-xl border-border/50 flex flex-col overflow-hidden">
         <div className="flex-1 overflow-auto">
