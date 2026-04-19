@@ -1,0 +1,240 @@
+# jan/04/2026 16:02:24 by RouterOS 6.47.10
+# software id = L8YF-Z03Q
+#
+# model = CCR1072-1G-8S+
+# serial number = D8420E77AA89
+/interface ethernet
+set [ find default-name=sfp-sfpplus3 ] name="P3 To MyIX"
+set [ find default-name=sfp-sfpplus5 ] name="To Core Router 01"
+set [ find default-name=sfp-sfpplus1 ] name="To IPServerOne Transit"
+set [ find default-name=sfp-sfpplus2 ] name="sfp-sfpplus2-NTT IPT"
+/interface bridge
+add name=Loopback0
+/interface vlan
+add interface="P3 To MyIX" name=vlan200-MyIX vlan-id=200
+/routing bgp instance
+set default disabled=yes
+add as=142628 name="HighFi BGP" out-filter=IPS1-bgp-out router-id=\
+    192.168.128.1
+/system logging action
+set 3 remote=103.171.42.2
+/interface bridge port
+add interface=ether1
+/ip settings
+set tcp-syncookies=yes
+/ip address
+add address=192.168.109.1/24 comment=defconf interface=ether1 network=\
+    192.168.109.0
+add address=10.100.101.38/29 comment="Connect To IPS1 Transit" interface=\
+    "To IPServerOne Transit" network=10.100.101.32
+add address=172.20.1.1/30 comment="Connect To Core Router 01" interface=\
+    "To Core Router 01" network=172.20.1.0
+add address=192.168.128.1 comment="Loopback IP" interface=Loopback0 network=\
+    192.168.128.1
+add address=218.100.44.30/24 comment="Connect To MyIX" interface=vlan200-MyIX \
+    network=218.100.44.0
+add address=203.78.193.234/30 comment="Connect To NTT IPT" disabled=yes \
+    interface="sfp-sfpplus2-NTT IPT" network=203.78.193.232
+/ip cloud
+set update-time=no
+/ip firewall address-list
+add address=192.168.88.2-192.168.88.254 list=allowed_to_router
+add address=0.0.0.0/8 comment=RFC6890 list=not_in_internet
+add address=172.16.0.0/12 comment=RFC6890 list=not_in_internet
+add address=192.168.0.0/16 comment=RFC6890 list=not_in_internet
+add address=10.0.0.0/8 comment=RFC6890 list=not_in_internet
+add address=169.254.0.0/16 comment=RFC6890 list=not_in_internet
+add address=127.0.0.0/8 comment=RFC6890 list=not_in_internet
+add address=224.0.0.0/4 comment=Multicast list=not_in_internet
+add address=198.18.0.0/15 comment=RFC6890 list=not_in_internet
+add address=192.0.0.0/24 comment=RFC6890 list=not_in_internet
+add address=192.0.2.0/24 comment=RFC6890 list=not_in_internet
+add address=198.51.100.0/24 comment=RFC6890 list=not_in_internet
+add address=203.0.113.0/24 comment=RFC6890 list=not_in_internet
+add address=100.64.0.0/10 comment=RFC6890 list=not_in_internet
+add address=240.0.0.0/4 comment=RFC6890 list=not_in_internet
+add address=192.88.99.0/24 comment="6to4 relay Anycast [RFC 3068]" list=\
+    not_in_internet
+add list=ddos-attackers
+add list=ddos-target
+/ip firewall filter
+add action=accept chain=input comment="default configuration" \
+    connection-state=established,related
+add action=accept chain=input src-address-list=allowed_to_router
+add action=accept chain=input protocol=icmp
+add action=drop chain=input connection-state=invalid,untracked
+add action=fasttrack-connection chain=forward comment=FastTrack \
+    connection-mark="speedtest connection" connection-state=\
+    established,related
+add action=accept chain=forward comment="Established, Related" \
+    connection-state=established,related
+add action=drop chain=forward comment="Drop invalid" connection-state=invalid \
+    log-prefix=invalid
+add action=jump chain=forward comment="jump to ICMP filters" jump-target=icmp \
+    protocol=icmp
+add action=drop chain=forward comment=\
+    "Drop incoming from internet which is not public IP" in-interface=ether1 \
+    log=yes log-prefix=!public src-address-list=not_in_internet
+add action=accept chain=icmp comment="echo reply" icmp-options=0:0 protocol=\
+    icmp
+add action=accept chain=icmp comment="net unreachable" icmp-options=3:0 \
+    protocol=icmp
+add action=accept chain=icmp comment="host unreachable" icmp-options=3:1 \
+    protocol=icmp
+add action=accept chain=icmp comment=\
+    "host unreachable fragmentation required" icmp-options=3:4 protocol=icmp
+add action=accept chain=icmp comment="allow echo request" icmp-options=8:0 \
+    protocol=icmp
+add action=accept chain=icmp comment="allow time exceed" icmp-options=11:0 \
+    protocol=icmp
+add action=accept chain=icmp comment="allow parameter bad" icmp-options=12:0 \
+    protocol=icmp
+add action=drop chain=icmp comment="deny all other types"
+add action=return chain=detect-ddos disabled=yes dst-limit=\
+    32,32,src-and-dst-addresses/10s
+add action=add-dst-to-address-list address-list=ddos-target \
+    address-list-timeout=10m chain=detect-ddos disabled=yes
+add action=add-src-to-address-list address-list=ddos-attackers \
+    address-list-timeout=10m chain=detect-ddos disabled=yes
+add action=return chain=detect-ddos disabled=yes dst-limit=\
+    32,32,src-and-dst-addresses/10s protocol=tcp tcp-flags=syn,ack
+add action=jump chain=forward connection-state=new jump-target=detect-ddos
+/ip firewall raw
+add action=drop chain=prerouting dst-address-list=ddos-target \
+    src-address-list=ddos-attackers
+/ip firewall service-port
+set ftp disabled=yes
+/ip service
+set telnet disabled=yes
+set ftp disabled=yes
+set www disabled=yes
+set ssh address=103.171.42.0/29 port=6969
+set api disabled=yes
+set winbox address=\
+    154.205.187.0/24,103.171.42.0/24,192.168.109.0/24,172.20.1.0/24 port=2288
+set api-ssl disabled=yes
+/routing bgp network
+add network=103.171.42.0/24 synchronize=no
+/routing bgp peer
+add in-filter=IPS1-bgp-in instance="HighFi BGP" name="Peer To IPServerOne R1" \
+    out-filter=IPS1-bgp-out remote-address=10.100.101.33 remote-as=45352 ttl=\
+    default
+add in-filter=IPS1-bgp-in instance="HighFi BGP" name="Peer To IPServerOne R2" \
+    out-filter=IPS1-bgp-out remote-address=10.100.101.34 remote-as=45352 ttl=\
+    default
+add default-originate=always instance="HighFi BGP" name=\
+    "Peer To Core Router 1" remote-address=172.20.1.2 remote-as=142628
+add in-filter=MyIX-bgp-in instance="HighFi BGP" name="Peer To MyIX R1" \
+    out-filter=MyIX-bgp-out remote-address=218.100.44.138 remote-as=55822 \
+    ttl=default
+add in-filter=MyIX-bgp-in instance="HighFi BGP" name="Peer To MyIX R2" \
+    out-filter=MyIX-bgp-out remote-address=218.100.44.139 remote-as=55822 \
+    ttl=default
+add in-filter=MyIX-bgp-in instance="HighFi BGP" name="Peer To TM via MyIX" \
+    out-filter=MyIX-bgp-out remote-address=218.100.44.127 remote-as=4788
+add disabled=yes in-filter=IPS1-bgp-in instance="HighFi BGP" name=\
+    "Peer To NTT IPT" out-filter=IPS1-bgp-out remote-address=203.78.193.233 \
+    remote-as=2914 tcp-md5-key=NTTHF@2o25# ttl=default
+/routing filter
+add action=accept chain=IPS1-bgp-out prefix=103.171.42.0 prefix-length=24 \
+    set-bgp-prepend-path=142628
+add action=discard chain=IPS1-bgp-out
+add action=accept chain=IPS1-bgp-in prefix=0.0.0.0/0 set-bgp-local-pref=100 \
+    set-bgp-med=45
+add action=discard chain=IPS1-bgp-in prefix=45.183.47.0/24 prefix-length=\
+    24-32
+add action=discard chain=IPS1-bgp-in prefix=10.0.0.0/8 prefix-length=8-32
+add action=discard chain=IPS1-bgp-in prefix=100.64.0.0/10 prefix-length=10-32
+add action=discard chain=IPS1-bgp-in prefix=127.0.0.0/8 prefix-length=8-32
+add action=discard chain=IPS1-bgp-in prefix=169.254.0.0/16 prefix-length=\
+    16-32
+add action=discard chain=IPS1-bgp-in prefix=172.16.0.0/12 prefix-length=12-32
+add action=discard chain=IPS1-bgp-in prefix=192.0.8.0/24 prefix-length=24-32
+add action=discard chain=IPS1-bgp-in prefix=192.88.99.0/24 prefix-length=\
+    24-32
+add action=discard chain=IPS1-bgp-in prefix=192.168.0.0/16 prefix-length=\
+    16-32
+add action=discard chain=IPS1-bgp-in prefix=198.18.0.0/15 prefix-length=15-32
+add action=discard chain=IPS1-bgp-in prefix=198.51.0.0/24 prefix-length=24-32
+add action=discard chain=IPS1-bgp-in prefix=203.0.113.0/24 prefix-length=\
+    24-32
+add action=discard chain=IPS1-bgp-in prefix=224.0.0.0/4 prefix-length=4-32
+add action=discard chain=IPS1-bgp-in prefix=240.0.0.0/4 prefix-length=4-32
+add action=discard chain=IPS1-bgp-in prefix=0.0.0.0/0 prefix-length=25-32
+add action=accept chain=IPS1-bgp-in set-bgp-local-pref=100 set-bgp-med=45
+add action=accept chain=MyIX-bgp-out prefix=103.171.42.0 prefix-length=24
+add action=discard chain=MyIX-bgp-out
+add action=accept chain=MyIX-bgp-in prefix=0.0.0.0/0 set-bgp-local-pref=200 \
+    set-bgp-med=20
+add action=discard chain=MyIX-bgp-in prefix=45.183.47.0/24 prefix-length=\
+    24-32
+add action=discard chain=MyIX-bgp-in prefix=10.0.0.0/8 prefix-length=8-32
+add action=discard chain=MyIX-bgp-in prefix=100.64.0.0/10 prefix-length=10-32
+add action=discard chain=MyIX-bgp-in prefix=127.0.0.0/8 prefix-length=8-32
+add action=discard chain=MyIX-bgp-in prefix=169.254.0.0/16 prefix-length=\
+    16-32
+add action=discard chain=MyIX-bgp-in prefix=172.16.0.0/12 prefix-length=12-32
+add action=discard chain=MyIX-bgp-in prefix=192.0.8.0/24 prefix-length=24-32
+add action=discard chain=MyIX-bgp-in prefix=192.88.99.0/24 prefix-length=\
+    24-32
+add action=discard chain=MyIX-bgp-in prefix=192.168.0.0/16 prefix-length=\
+    16-32
+add action=discard chain=MyIX-bgp-in prefix=198.18.0.0/15 prefix-length=15-32
+add action=discard chain=MyIX-bgp-in prefix=198.51.0.0/24 prefix-length=24-32
+add action=discard chain=MyIX-bgp-in prefix=203.0.113.0/24 prefix-length=\
+    24-32
+add action=discard chain=MyIX-bgp-in prefix=224.0.0.0/4 prefix-length=4-32
+add action=discard chain=MyIX-bgp-in prefix=240.0.0.0/4 prefix-length=4-32
+add action=discard chain=MyIX-bgp-in prefix=0.0.0.0/0 prefix-length=25-32
+add action=accept chain=MyIX-bgp-in set-bgp-local-pref=200 set-bgp-med=20
+/snmp
+set enabled=yes
+/system clock
+set time-zone-name=Asia/Kuala_Lumpur
+/system identity
+set name=CJ-BGPR-M1072-01
+/system note
+set show-at-login=no
+/system ntp client
+set enabled=yes primary-ntp=162.159.200.123 secondary-ntp=162.159.200.1
+/system scheduler
+add interval=5d name="Auto Backup & Export" on-event=autobackup policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon \
+    start-date=oct/17/2021 start-time=16:02:24
+add interval=5d name="Upload File Backup" on-event=uploadbackup policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon \
+    start-date=oct/17/2021 start-time=19:40:35
+add interval=5d name="Upload File Export" on-event=uploadsrc policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon \
+    start-date=oct/17/2021 start-time=19:41:22
+/system script
+add dont-require-permissions=no name=autobackup owner=JNXAdmin policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source="/\
+    system backup save name=(\"BACKUP\". \"-\". [/system identity get name]. \
+    \"-\". \\\r\
+    \n[:pick [/system clock get date] 4 6]. [:pick [/system clock get date] 0 \
+    3]. [: pick [/system clock get date] 7 11]);\r\
+    \n/ export file=( \"BACKUP\". \"-\". [/system identity get name]. \"-\". \
+    \\\r\
+    \n[:pick [/system clock get date] 4 6]. [:pick [/system clock get date] 0 \
+    3]. [:pick [/system clock get date] 7 11]);"
+add dont-require-permissions=no name=uploadbackup owner=JNXAdmin policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source=":\
+    global backupname (\"BACKUP\". \"-\". [/system identity get name]. \"-\". \
+    \\\r\
+    \n[:pick [/system clock get date] 4 6]. [:pick [/system clock get date] 0 \
+    3]. [:pick [/system clock get date] 7 11]. \".backup\");\r\
+    \n/tool fetch address=103.171.42.2 mode=ftp user=FTPbackup password=FTP@2o\
+    21 src-path=\$backupname dst-path=\"/\$backupname\" upload=yes"
+add dont-require-permissions=no name=uploadsrc owner=JNXAdmin policy=\
+    ftp,reboot,read,write,policy,test,password,sniff,sensitive,romon source=":\
+    global backupname (\"BACKUP\". \"-\". [/system identity get name]. \"-\". \
+    \\\r\
+    \n[:pick [/system clock get date] 4 6]. [:pick [/system clock get date] 0 \
+    3]. [:pick [/system clock get date] 7 11]. \".rsc\");\r\
+    \n/tool fetch address=103.171.42.2 mode=ftp user=FTPbackup password=FTP@2o\
+    21 src-path=\$backupname dst-path=\"/\$backupname\" upload=yes"
+/tool bandwidth-server
+set enabled=no
+/tool sniffer
+set filter-interface="To IPServerOne Transit"
