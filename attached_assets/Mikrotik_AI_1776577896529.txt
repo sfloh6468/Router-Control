@@ -1,0 +1,175 @@
+Based strictly on your configuration
+You are running:
+
+NTT (AS2914) – disabled
+IPServerOne (AS45352) – active
+MyIX (AS55822 + AS4788) – active
+Higher local-pref on MyIX (200) vs IPS1 (100)
+From filters:
+
+Download
+Copy code
+MyIX-bgp-in → set-bgp-local-pref=200
+IPS1-bgp-in → set-bgp-local-pref=100
+This means:
+
+✅ MyIX should be preferred over transit
+✅ IPS1 should be backup to MyIX
+
+So the policy logic is correct.
+
+The Real Problem
+1️⃣ You Accept Default Route From MyIX
+In MyIX-bgp-in:
+
+Download
+Copy code
+add action=accept chain=MyIX-bgp-in prefix=0.0.0.0/0 \
+    set-bgp-local-pref=200 set-bgp-med=20
+This is a serious design issue.
+
+IX route servers should not be used as default transit.
+
+If MyIX sends default route (or partial routes), your router may:
+
+Prefer MyIX for everything
+Or receive only limited routes
+Or fail to learn Malaysian CDN prefixes properly
+IX should normally:
+
+Accept only specific local prefixes
+NOT provide full Internet routing
+NOT be default route
+2️⃣ You Accept Only Default From IPS1
+From IPS1:
+
+Download
+Copy code
+add action=accept chain=IPS1-bgp-in prefix=0.0.0.0/0
+Then later:
+
+Download
+Copy code
+add action=accept chain=IPS1-bgp-in
+This effectively allows:
+
+Default route
+Then everything else (because of final accept rule)
+So IPS1 is giving you full routing table (or large partial table).
+
+3️⃣ What Likely Happened With NTT
+When NTT was active:
+
+If NTT gave full table
+If MyIX only gave limited routes
+If Netflix/Google prefixes were not learned via MyIX
+Or learned with worse attributes
+Then traffic would prefer NTT.
+
+Even if CDN is physically in Malaysia, BGP decision is based on:
+
+Local-pref
+AS-path
+Origin
+MED
+eBGP over iBGP
+IGP metric
+If Netflix CDN prefixes were not present from MyIX, router had no choice but to use NTT.
+
+Most Probable Root Cause
+✅ MyIX was not sending Netflix/Google prefixes
+OR
+✅ You filtered them accidentally
+OR
+✅ NTT path was shorter AS-path
+
+When you enabled IPS1:
+
+IPS1 likely peers locally with CDN
+You received better path
+Traffic moved away from NTT
+What You Must Verify (Critical)
+Run:
+
+Download
+Copy code
+/ip route print where dst-address=<netflix-prefix>
+Check:
+
+Which peer installed the route?
+What is local-pref?
+What is AS-path?
+Also check:
+
+Download
+Copy code
+/routing bgp advertisements print
+and
+
+Download
+Copy code
+/routing bgp peer print status
+Design Correction Required
+✅ Remove default route from MyIX
+Delete this:
+
+Download
+Copy code
+/routing filter remove [find chain=MyIX-bgp-in prefix=0.0.0.0/0]
+IX should NOT be default.
+
+✅ Make NTT Full Transit
+NTT should:
+
+Provide full table OR default route
+Have lower local-pref than MyIX
+Example logic:
+
+Peer	Role	Local-Pref
+MyIX	Local peering	200
+NTT	Primary transit	150
+IPS1	Backup transit	100
+✅ Ensure MyIX Actually Sends CDN Prefixes
+Check BGP received routes count per peer.
+
+If MyIX sends only few hundred routes: → It is not full CDN coverage.
+
+Important Observation
+You are running:
+
+Download
+Copy code
+RouterOS 6.47.10
+Model: CCR1072
+This is very old RouterOS.
+
+For ISP core router:
+
+✅ Move to RouterOS 7
+✅ Move to ARM64 platform (CCR2004 / CCR2116 / CCR2216)
+
+RouterOS 7 BGP is significantly improved.
+
+Conclusion
+Nothing is “broken”.
+
+This is classic BGP policy + route visibility issue.
+
+Your issue was likely:
+
+MyIX not advertising CDN prefixes
+NTT having better path
+Improper filter design (accepting default from IX)
+Next Step
+Before removing IPS1:
+
+Re-enable NTT
+Remove default from MyIX
+Set proper local-pref hierarchy
+Check Netflix/Google prefix best path
+Verify traffic using:
+Download
+Copy code
+/tool torch
+If you want full BGP policy redesign for production ISP environment, use a MikroTik certified consultant. This is core network architecture work.
+
