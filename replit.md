@@ -119,22 +119,9 @@ Utility scripts package. Each script is a `.ts` file in `src/` with a correspond
 - **Critical TLS fix**: MikroTik's API SSL uses **ADH (Anonymous Diffie-Hellman)** ciphers (`ADH-AES256-SHA256`). OpenSSL 3.0 disables ADH by default. Must pass `ciphers: "ADH:@SECLEVEL=0"` to `tls.connect()` options in the `routeros-client` config.
 - Backend routes: `artifacts/api-server/src/routes/mikrotik.ts` — all API calls go through `withClient()` which opens and closes a transport-aware connection per request.
 
-## Sandbox-Side Diagnostics (added 2026-04-20)
+## AI Assistant — Router-Operator Mode (2026-04-20)
 
-To support BGP / ISP troubleshooting where the AI needs a second vantage point on the public internet (independent of the user's router), the chat assistant now has these tools beyond `run_router_command`:
-
-| Tool | Purpose |
-|---|---|
-| `tcp_probe` | Single TCP connect with timeout — telnet replacement |
-| `tcp_ping` | N TCP probes → min/avg/max latency + loss% |
-| `dns_lookup` | A / AAAA / MX / TXT / NS / CNAME / SOA / CAA / SRV / PTR |
-| `reverse_dns` | PTR for an IP |
-| `http_probe` | HTTP/HTTPS reach test → status, latency, redirect chain, TLS cert |
-| `asn_lookup` | Origin ASN + AS name for an IPv4 (Team Cymru DNS) |
-| `rdap_ip` / `rdap_domain` | Modern WHOIS via RDAP (ARIN bootstrap / rdap.org) |
-| `sandbox_info` | This sandbox's public IP / ASN / country (Cloudflare trace) |
-
-All implemented as pure-Node code in `artifacts/api-server/src/lib/diagnostics.ts` — no shell, no privileged sockets, works inside the container without root. ICMP ping/traceroute would need raw sockets so we substitute TCP-based probes (which are actually more useful for BGP/firewall debugging anyway). Tools are routed through a `DIAGNOSTIC_TOOLS` set in `chat.ts` and don't require the user to be connected to a router. The system prompt instructs the AI to compare router-side and sandbox-side probes for asymmetric routing / blackhole / BGP leak detection.
+The chat AI is positioned as a "logged-in admin" on the user's router. It has exactly **one** tool, `run_router_command`, which executes any RouterOS command over the active transport (API-SSL / REST / SSH). The system prompt tells it to think like a senior MikroTik engineer who just opened a Terminal: configuration, troubleshooting, diagnostics, statistics, status display, monitoring, scripts — all are in scope. Long-running tools (`/ping`, `/tool/traceroute`, `/tool/torch`, `/tool/bandwidth-test`) must be bounded with `count=N` or `duration=Ns` so they terminate. Read-only commands (print/get/export) run freely; mutating commands (add/set/remove/enable/disable) require explicit user approval first. Read-only role users have mutations server-side blocked via `isMutating()` regardless of AI behavior.
 
 ## Multi-Transport Support (added 2026-04-20)
 
