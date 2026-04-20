@@ -222,7 +222,12 @@ async function buildRestAdapter(creds: RouterCreds, transport: Transport): Promi
           port: u.port || 443,
           path: u.pathname + u.search,
           method,
+          // RouterOS www-ssl with self-generated cert uses anonymous-DH
+          // ciphers, which OpenSSL 3 disables by default. Same fix as
+          // the binary API-SSL adapter.
           rejectUnauthorized: false,
+          ciphers: "ADH:ALL:@SECLEVEL=0",
+          minVersion: "TLSv1" as const,
           headers: init.headers as Record<string, string>,
         }, (resp) => {
           const chunks: Buffer[] = [];
