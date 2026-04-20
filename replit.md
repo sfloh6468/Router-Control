@@ -119,3 +119,18 @@ Utility scripts package. Each script is a `.ts` file in `src/` with a correspond
 - **Critical TLS fix**: MikroTik's API SSL uses **ADH (Anonymous Diffie-Hellman)** ciphers (`ADH-AES256-SHA256`). OpenSSL 3.0 disables ADH by default. Must pass `ciphers: "ADH:@SECLEVEL=0"` to `tls.connect()` options in the `routeros-client` config.
 - The REST API on port 58080 (HTTP) returns 404 — it likely requires HTTPS. HTTPS also fails due to the same ADH cipher issue in openssl s_client, but works via `routeros-client` with the fix above.
 - Backend routes: `artifacts/api-server/src/routes/mikrotik.ts` — all API calls go through `withClient()` which opens and closes a binary API connection per request.
+
+## Authentication & AI Assistant (added 2026-04-20)
+
+**Auth (Clerk):**
+- Provisioned via `setupClerkWhitelabelAuth()`. Env: `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`, `VITE_CLERK_PUBLISHABLE_KEY`.
+- Server: `clerkMiddleware()` + `clerkProxyMiddleware()` mounted in `artifacts/api-server/src/app.ts`.
+- All `/api/mikrotik/*` and `/api/chat/*` routes gated by `requireAuth` middleware.
+- Frontend: `App.tsx` wraps app in `<ClerkProvider>` with custom themed appearance, dedicated `/sign-in` and `/sign-up` routes, signed-out users redirect to sign-in.
+
+**AI Chat Assistant (Anthropic via AI Integrations):**
+- Provisioned via `setupReplitAIIntegrations({ providerSlug: "anthropic" })`. Env: `AI_INTEGRATIONS_ANTHROPIC_BASE_URL`, `AI_INTEGRATIONS_ANTHROPIC_API_KEY`.
+- Backend: `artifacts/api-server/src/routes/chat.ts` — `POST /api/chat/stream` SSE endpoint. Multi-turn agentic loop with `claude-sonnet-4-6`. One tool: `run_router_command(command)` which opens a fresh API-SSL session, parses RouterOS commands (menu/sub/key=value/positional), and returns output.
+- Frontend: `src/lib/chat-context.tsx` (state + SSE parser) + `src/components/chat-sidebar.tsx` (collapsible right sidebar with markdown rendering, tool-call cards, file/image attachments, suggestion prompts). Always visible (collapsed handle when closed), works on connection screen too.
+- Attachments: images sent as base64 image blocks; text files (configs, logs, .rsc) inlined into user message. 25 MB body limit on api-server.
+- Safety: LLM is system-prompted to ask explicit approval before mutating commands; user sees every command live in tool-call cards with status; has Stop button. No backend command policy gate yet — could be added (parse subcommand, require approval token for non-print/get/export).
