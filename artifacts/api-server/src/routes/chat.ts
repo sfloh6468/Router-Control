@@ -1,9 +1,9 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
-import { RouterOSClient } from "routeros-client";
 import { db, conversationsTable, messagesTable, type MessageAttachment, type MessageToolCall } from "@workspace/db";
 import { eq, and } from "drizzle-orm";
 import { requireUser } from "../middlewares/requireAuth";
+import { connectRouter, type RouterCreds } from "../lib/router-transport";
 
 const router: IRouter = Router();
 
@@ -12,29 +12,7 @@ const anthropic = new Anthropic({
   baseURL: process.env.AI_INTEGRATIONS_ANTHROPIC_BASE_URL!,
 });
 
-const API_SSL_PORTS = [8729];
-
-type Credentials = {
-  host: string;
-  port?: number;
-  username: string;
-  password: string;
-};
-
-function makeClient(c: Credentials) {
-  const portNum = c.port ?? 8728;
-  const useTls = API_SSL_PORTS.includes(portNum);
-  return new RouterOSClient({
-    host: c.host,
-    user: c.username,
-    password: c.password,
-    port: portNum,
-    tls: useTls
-      ? { rejectUnauthorized: false, ciphers: "ADH:@SECLEVEL=0" }
-      : undefined,
-    timeout: 15,
-  });
-}
+type Credentials = RouterCreds;
 
 const READ_ONLY_SUBS = new Set(["print", "get", "export", "monitor-traffic", "monitor", "find"]);
 function isMutating(command: string): boolean {
@@ -47,15 +25,21 @@ async function runRouterCommand(
   c: Credentials,
   command: string,
 ): Promise<{ ok: true; output: unknown } | { ok: false; error: string }> {
-  const api = makeClient(c);
-  let client: Awaited<ReturnType<RouterOSClient["connect"]>>;
+  let client;
   try {
-    client = await api.connect();
+    client = await connectRouter(c);
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 
   try {
+    // SSH transport: just pipe the line through to the router shell.
+    if (client.transport === "ssh") {
+      const out = await client.exec(command.trim());
+      client.close();
+      return { ok: true, output: out.replace(/\r/g, "").trimEnd() || "(no output)" };
+    }
+
     const trimmed = command.trim();
     const parts = trimmed.split(/\s+/);
     let menuPath = parts[0];
@@ -90,31 +74,31 @@ async function runRouterCommand(
         break;
       }
       case "add": {
-        const r = await (menu as any).add(args);
+        const r = await menu.add(args);
         output = `Added: ${JSON.stringify(r)}`;
         break;
       }
       case "set": {
-        if (positional) await (menu as any).set(args, positional);
-        else await (menu as any).set(args);
+        if (positional) await menu.update(args, positional);
+        else await menu.update(args);
         output = "Set successfully.";
         break;
       }
       case "remove": {
         if (!positional) throw new Error("remove requires an id/index argument");
-        await (menu as any).remove(positional);
+        await menu.remove(positional);
         output = `Removed ${positional}.`;
         break;
       }
       case "enable": {
         if (!positional) throw new Error("enable requires an id/index argument");
-        await (menu as any).enable(positional);
+        await menu.enable(positional);
         output = `Enabled ${positional}.`;
         break;
       }
       case "disable": {
         if (!positional) throw new Error("disable requires an id/index argument");
-        await (menu as any).disable(positional);
+        await menu.disable(positional);
         output = `Disabled ${positional}.`;
         break;
       }
@@ -126,10 +110,10 @@ async function runRouterCommand(
         }
       }
     }
-    api.close();
+    client.close();
     return { ok: true, output };
   } catch (err) {
-    api.close();
+    try { client.close(); } catch { /* ignore */ }
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
 }

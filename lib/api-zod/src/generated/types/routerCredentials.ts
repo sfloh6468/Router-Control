@@ -5,10 +5,20 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { RouterCredentialsTransport } from "./routerCredentialsTransport";
 
 export interface RouterCredentials {
   host: string;
   port?: number;
   username: string;
   password: string;
+  /** Connection transport.
+  - api      = MikroTik binary API (default port 8728)
+  - api-ssl  = MikroTik binary API over TLS (default port 8729) — DEFAULT
+  - rest     = Webfig REST API over HTTP (default port 80)
+  - rest-tls = Webfig REST API over HTTPS (default port 443)
+  - ssh      = SSH (default port 22) — terminal + chat only,
+               dashboards not supported
+ */
+  transport?: RouterCredentialsTransport;
 }

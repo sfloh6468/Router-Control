@@ -23,6 +23,12 @@ export const TestConnectionBody = zod.object({
   port: zod.number().optional(),
   username: zod.string(),
   password: zod.string(),
+  transport: zod
+    .enum(["api", "api-ssl", "rest", "rest-tls", "ssh"])
+    .optional()
+    .describe(
+      "Connection transport.\n  - api      = MikroTik binary API (default port 8728)\n  - api-ssl  = MikroTik binary API over TLS (default port 8729) — DEFAULT\n  - rest     = Webfig REST API over HTTP (default port 80)\n  - rest-tls = Webfig REST API over HTTPS (default port 443)\n  - ssh      = SSH (default port 22) — terminal + chat only,\n               dashboards not supported\n",
+    ),
 });
 
 export const TestConnectionResponse = zod.object({
@@ -40,6 +46,12 @@ export const GetSystemResourceBody = zod.object({
   port: zod.number().optional(),
   username: zod.string(),
   password: zod.string(),
+  transport: zod
+    .enum(["api", "api-ssl", "rest", "rest-tls", "ssh"])
+    .optional()
+    .describe(
+      "Connection transport.\n  - api      = MikroTik binary API (default port 8728)\n  - api-ssl  = MikroTik binary API over TLS (default port 8729) — DEFAULT\n  - rest     = Webfig REST API over HTTP (default port 80)\n  - rest-tls = Webfig REST API over HTTPS (default port 443)\n  - ssh      = SSH (default port 22) — terminal + chat only,\n               dashboards not supported\n",
+    ),
 });
 
 export const GetSystemResourceResponse = zod.object({
@@ -66,6 +78,12 @@ export const GetInterfacesBody = zod.object({
   port: zod.number().optional(),
   username: zod.string(),
   password: zod.string(),
+  transport: zod
+    .enum(["api", "api-ssl", "rest", "rest-tls", "ssh"])
+    .optional()
+    .describe(
+      "Connection transport.\n  - api      = MikroTik binary API (default port 8728)\n  - api-ssl  = MikroTik binary API over TLS (default port 8729) — DEFAULT\n  - rest     = Webfig REST API over HTTP (default port 80)\n  - rest-tls = Webfig REST API over HTTPS (default port 443)\n  - ssh      = SSH (default port 22) — terminal + chat only,\n               dashboards not supported\n",
+    ),
 });
 
 export const GetInterfacesResponseItem = zod.object({
@@ -88,6 +106,12 @@ export const GetIpAddressesBody = zod.object({
   port: zod.number().optional(),
   username: zod.string(),
   password: zod.string(),
+  transport: zod
+    .enum(["api", "api-ssl", "rest", "rest-tls", "ssh"])
+    .optional()
+    .describe(
+      "Connection transport.\n  - api      = MikroTik binary API (default port 8728)\n  - api-ssl  = MikroTik binary API over TLS (default port 8729) — DEFAULT\n  - rest     = Webfig REST API over HTTP (default port 80)\n  - rest-tls = Webfig REST API over HTTPS (default port 443)\n  - ssh      = SSH (default port 22) — terminal + chat only,\n               dashboards not supported\n",
+    ),
 });
 
 export const GetIpAddressesResponseItem = zod.object({
@@ -109,6 +133,12 @@ export const GetFirewallRulesBody = zod.object({
   port: zod.number().optional(),
   username: zod.string(),
   password: zod.string(),
+  transport: zod
+    .enum(["api", "api-ssl", "rest", "rest-tls", "ssh"])
+    .optional()
+    .describe(
+      "Connection transport.\n  - api      = MikroTik binary API (default port 8728)\n  - api-ssl  = MikroTik binary API over TLS (default port 8729) — DEFAULT\n  - rest     = Webfig REST API over HTTP (default port 80)\n  - rest-tls = Webfig REST API over HTTPS (default port 443)\n  - ssh      = SSH (default port 22) — terminal + chat only,\n               dashboards not supported\n",
+    ),
 });
 
 export const GetFirewallRulesResponseItem = zod.object({
@@ -134,6 +164,12 @@ export const GetDhcpLeasesBody = zod.object({
   port: zod.number().optional(),
   username: zod.string(),
   password: zod.string(),
+  transport: zod
+    .enum(["api", "api-ssl", "rest", "rest-tls", "ssh"])
+    .optional()
+    .describe(
+      "Connection transport.\n  - api      = MikroTik binary API (default port 8728)\n  - api-ssl  = MikroTik binary API over TLS (default port 8729) — DEFAULT\n  - rest     = Webfig REST API over HTTP (default port 80)\n  - rest-tls = Webfig REST API over HTTPS (default port 443)\n  - ssh      = SSH (default port 22) — terminal + chat only,\n               dashboards not supported\n",
+    ),
 });
 
 export const GetDhcpLeasesResponseItem = zod.object({
@@ -156,6 +192,12 @@ export const GetWirelessClientsBody = zod.object({
   port: zod.number().optional(),
   username: zod.string(),
   password: zod.string(),
+  transport: zod
+    .enum(["api", "api-ssl", "rest", "rest-tls", "ssh"])
+    .optional()
+    .describe(
+      "Connection transport.\n  - api      = MikroTik binary API (default port 8728)\n  - api-ssl  = MikroTik binary API over TLS (default port 8729) — DEFAULT\n  - rest     = Webfig REST API over HTTP (default port 80)\n  - rest-tls = Webfig REST API over HTTPS (default port 443)\n  - ssh      = SSH (default port 22) — terminal + chat only,\n               dashboards not supported\n",
+    ),
 });
 
 export const GetWirelessClientsResponseItem = zod.object({
@@ -180,6 +222,7 @@ export const RunCommandBody = zod.object({
   port: zod.number().optional(),
   username: zod.string(),
   password: zod.string(),
+  transport: zod.enum(["api", "api-ssl", "rest", "rest-tls", "ssh"]).optional(),
   command: zod.string(),
 });
 

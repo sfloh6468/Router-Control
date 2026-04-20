@@ -10,11 +10,22 @@ import { useMikrotikConnect } from "@/hooks/use-mikrotik";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
+const TRANSPORTS = [
+  { value: "api-ssl", label: "API-SSL  (8729)", port: 8729, hint: "MikroTik binary API over TLS — recommended", recommended: true },
+  { value: "api",     label: "API  (8728)",     port: 8728, hint: "MikroTik binary API, no TLS" },
+  { value: "rest-tls", label: "REST / Webfig HTTPS  (443)", port: 443, hint: "Webfig REST API over HTTPS — works through most firewalls (RouterOS 7.1+)" },
+  { value: "rest",    label: "REST / Webfig HTTP  (80)",   port: 80,  hint: "Webfig REST API plain HTTP (RouterOS 7.1+)" },
+  { value: "ssh",     label: "SSH  (22)",       port: 22,  hint: "SSH — terminal & AI chat only; dashboards not available" },
+] as const;
+
+type TransportValue = typeof TRANSPORTS[number]["value"];
+
 const connectionSchema = z.object({
   host: z.string().min(1, "IP/Hostname is required"),
   port: z.coerce.number().optional().default(8729),
   username: z.string().min(1, "Username is required"),
-  password: z.string()
+  password: z.string(),
+  transport: z.enum(["api", "api-ssl", "rest", "rest-tls", "ssh"]).default("api-ssl"),
 });
 
 type ConnectionFormValues = z.infer<typeof connectionSchema>;
@@ -31,9 +42,20 @@ export default function ConnectionPage() {
       host: "",
       port: 8729,
       username: "admin",
-      password: ""
+      password: "",
+      transport: "api-ssl",
     }
   });
+
+  const transport = form.watch("transport");
+  const transportInfo = TRANSPORTS.find((t) => t.value === transport) ?? TRANSPORTS[0];
+
+  // When the user picks a different transport, snap the port to that
+  // transport's default — they can still override it manually after.
+  React.useEffect(() => {
+    const t = TRANSPORTS.find((x) => x.value === transport);
+    if (t) form.setValue("port", t.port);
+  }, [transport]);
 
   const onSubmit = async (data: ConnectionFormValues) => {
     try {
@@ -138,20 +160,35 @@ export default function ConnectionPage() {
               </div>
             </div>
 
-            {/* Port reference guide */}
-            <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs space-y-1.5">
-              <div className="flex items-center gap-1.5 text-blue-700 font-medium">
-                <Info className="h-3.5 w-3.5 shrink-0" />
-                Port Reference (MikroTik IP Services)
+            {/* Transport selector */}
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Transport</label>
+              <select
+                {...form.register("transport")}
+                className="w-full h-10 px-3 rounded-md bg-background border border-input text-foreground text-sm focus:border-primary/50 focus:outline-none"
+              >
+                {TRANSPORTS.map((t) => (
+                  <option key={t.value} value={t.value}>
+                    {t.label}{t.recommended ? "  ★" : ""}
+                  </option>
+                ))}
+              </select>
+              <div className="p-2.5 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs flex items-start gap-1.5 text-muted-foreground">
+                <Info className="h-3.5 w-3.5 shrink-0 mt-0.5 text-blue-700" />
+                <span>{transportInfo.hint}</span>
               </div>
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground">
-                <span><span className="font-mono text-foreground/80">8729</span> — API-SSL <span className="text-emerald-600">★ Recommended</span></span>
-                <span><span className="font-mono text-foreground/80">8728</span> — API (no TLS)</span>
-              </div>
-              <div className="text-amber-700 flex items-start gap-1.5 mt-1">
-                <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-                If you get a timeout, your router firewall may be blocking port 8729 externally. Add a firewall rule: <span className="font-mono">/ip firewall filter add chain=input protocol=tcp dst-port=8729 action=accept</span>
-              </div>
+              {transport === "ssh" && (
+                <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-xs flex items-start gap-1.5 text-amber-700">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>SSH lets you reach the router when API ports are blocked, but the dashboard pages (Interfaces / Firewall / DHCP / Wireless) are unavailable over SSH. The Terminal page and the AI assistant work fully.</span>
+                </div>
+              )}
+              {(transport === "rest" || transport === "rest-tls") && (
+                <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-lg text-xs flex items-start gap-1.5 text-amber-700">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                  <span>REST/Webfig requires RouterOS 7.1 or newer with the <span className="font-mono">www</span> (or <span className="font-mono">www-ssl</span>) service enabled. Self-signed certificates are accepted automatically.</span>
+                </div>
+              )}
             </div>
 
             <div className="space-y-1.5">

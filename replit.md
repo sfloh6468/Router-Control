@@ -117,8 +117,35 @@ Utility scripts package. Each script is a `.ts` file in `src/` with a correspond
 - Router runs **RouterOS v7.8** on IP `175.139.250.90`
 - API SSL port `8729` is open and reachable; plain API port `8728` is ECONNREFUSED from external
 - **Critical TLS fix**: MikroTik's API SSL uses **ADH (Anonymous Diffie-Hellman)** ciphers (`ADH-AES256-SHA256`). OpenSSL 3.0 disables ADH by default. Must pass `ciphers: "ADH:@SECLEVEL=0"` to `tls.connect()` options in the `routeros-client` config.
-- The REST API on port 58080 (HTTP) returns 404 — it likely requires HTTPS. HTTPS also fails due to the same ADH cipher issue in openssl s_client, but works via `routeros-client` with the fix above.
-- Backend routes: `artifacts/api-server/src/routes/mikrotik.ts` — all API calls go through `withClient()` which opens and closes a binary API connection per request.
+- Backend routes: `artifacts/api-server/src/routes/mikrotik.ts` — all API calls go through `withClient()` which opens and closes a transport-aware connection per request.
+
+## Multi-Transport Support (added 2026-04-20)
+
+The backend supports **four transports** so the app can reach a router whatever ports the user's firewall allows. The transport is part of `RouterCredentials` (added to `lib/api-spec/openapi.yaml` → regenerated into `@workspace/api-zod` and `@workspace/api-client-react`):
+
+| Transport  | Default port | Use case                                              |
+|------------|--------------|-------------------------------------------------------|
+| `api-ssl`  | 8729         | DEFAULT — MikroTik binary API over TLS                 |
+| `api`      | 8728         | MikroTik binary API, plain                             |
+| `rest-tls` | 443          | Webfig REST API over HTTPS (RouterOS 7.1+)             |
+| `rest`     | 80           | Webfig REST API plain HTTP (RouterOS 7.1+)             |
+| `ssh`      | 22           | SSH — terminal & AI chat only, dashboards unavailable  |
+
+**Architecture:**
+- All transports are unified behind a single `RouterAdapter` interface in `artifacts/api-server/src/lib/router-transport.ts`. Every adapter exposes the same `menu(path).{get,getOnly,add,update,remove,enable,disable}` surface that `routeros-client` provided, plus `exec(command)` for raw SSH commands and a `transport` discriminator.
+- `connectRouter(creds)` returns the right adapter; `withRouter(creds, fn)` is the open-run-close helper. Both auto-resolve transport from explicit field OR from port number (so legacy clients that just send a port still work).
+- `mikrotik.ts` and `chat.ts` are now transport-agnostic — they just do `withClient({...creds, transport}, async (client) => client.menu(...).get())`.
+
+**REST adapter (`buildRestAdapter`):** Webfig REST API on `/rest/<path>`. HTTP Basic auth, JSON in/out. PUT for add, PATCH for update, DELETE for remove, POST `/enable`/`/disable` with `{".id": id}`. Self-signed HTTPS certs accepted via `node:https` with `rejectUnauthorized: false`. Kebab-case keys from REST are converted to camelCase to match the routeros-client contract used by all dashboards.
+
+**SSH adapter (`buildSshAdapter`):** Uses `ssh2` npm package. Connects with username suffix `+ct` (disables color output and pagination) so streams are parseable.
+- For raw `exec(line)` (used by terminal route and the AI tool): pipe the line straight through, return stdout.
+- For structured `menu(p).get()` (dashboards): runs `<path> print as-value without-paging` and parses semicolon-separated key=val lines per record. Mutations build raw RouterOS CLI commands (`/<path> add k=v ...`, `set <id> ...`, `remove <id>`, `enable/disable <id>`).
+- Wide algorithm whitelist (curve25519/dh-group14/group1, ed25519/rsa-sha2/ssh-rsa, aes-ctr/gcm/cbc) to handle older RouterOS SSH defaults.
+
+**Connect screen UI (`artifacts/mikrotik-manager/src/pages/connection.tsx`):** Transport `<select>` above the port field. Picking a transport snaps the port input to the new default (still manually overridable). Shows transport-specific hints + warnings (SSH = "dashboards unavailable", REST = "needs RouterOS 7.1+ with www service").
+
+**Build cache gotcha:** `lib/api-zod` and `lib/api-client-react` had stale `dist/` folders with old `.d.ts` files. After running `pnpm --filter @workspace/api-spec run codegen`, those dist folders must be deleted (or `tsc --build` re-run) — otherwise TypeScript reads the cached declarations and won't see new fields like `transport`. Easy fix: `rm -rf lib/api-zod/dist lib/api-client-react/dist lib/db/dist`.
 
 ## Authentication & AI Assistant (added 2026-04-20)
 

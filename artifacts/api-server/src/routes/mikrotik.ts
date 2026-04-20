@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
 import { z } from "zod";
-import { RouterOSClient } from "routeros-client";
 import {
   TestConnectionBody,
   GetSystemResourceBody,
@@ -12,6 +11,11 @@ import {
   RunCommandBody,
 } from "@workspace/api-zod";
 import { requireUser, requireWriter } from "../middlewares/requireAuth";
+import {
+  withRouter,
+  type RouterAdapter,
+  type RouterCreds,
+} from "../lib/router-transport";
 
 const router: IRouter = Router();
 
@@ -19,55 +23,22 @@ const router: IRouter = Router();
 // Mutating endpoints: read_write or superuser only.
 router.use(requireUser);
 
-const API_SSL_PORTS = [8729, 8728 + 1];
-
-function makeClient(host: string, port: number | undefined, username: string, password: string) {
-  const portNum = port ?? 8728;
-  const useTls = API_SSL_PORTS.includes(portNum);
-  return new RouterOSClient({
-    host,
-    user: username,
-    password,
-    port: portNum,
-    tls: useTls ? {
-      rejectUnauthorized: false,
-      // MikroTik API SSL uses ADH (Anonymous Diffie-Hellman) ciphers
-      // which are disabled in OpenSSL 3 by default — must allow them explicitly
-      ciphers: "ADH:@SECLEVEL=0",
-    } : undefined,
-    timeout: 10,
-  });
-}
-
+/**
+ * Open a transport-aware connection (binary API / REST / SSH), run `fn` against
+ * the unified adapter, and always close the connection. The adapter exposes
+ * the same `.menu(path).get/getOnly/add/update/remove/enable/disable` surface
+ * as routeros-client did, so the rest of this file stays unchanged.
+ */
 async function withClient<T>(
-  host: string,
-  port: number | undefined,
-  username: string,
-  password: string,
-  fn: (client: ReturnType<RouterOSClient["connect"]> extends Promise<infer R> ? R : never) => Promise<T>
+  creds: RouterCreds,
+  fn: (client: RouterAdapter) => Promise<T>,
 ): Promise<T> {
-  const api = makeClient(host, port, username, password);
-  let client: Awaited<ReturnType<RouterOSClient["connect"]>>;
-  try {
-    client = await api.connect();
-  } catch (err) {
-    throw err;
-  }
-  try {
-    const result = await fn(client);
-    api.close();
-    return result;
-  } catch (err) {
-    api.close();
-    throw err;
-  }
+  return await withRouter(creds, fn);
 }
 
-// routeros-client transforms all field names to camelCase and strips leading dots:
-//   board-name  → boardName
-//   cpu-count   → cpuCount
-//   .id         → id
-// Also parses numeric strings to numbers and "true"/"false" to booleans.
+// Adapters return records with camelCase keys and `id` (no leading dot),
+// matching the routeros-client convention. Also parses numeric strings →
+// numbers and "true"/"false" → booleans.
 function str(val: unknown): string | null {
   if (val == null) return null;
   return String(val);
@@ -89,6 +60,7 @@ const WriteBase = z.object({
   port: z.number().optional(),
   username: z.string(),
   password: z.string(),
+  transport: z.enum(["api", "api-ssl", "rest", "rest-tls", "ssh"]).optional(),
 });
 
 // ─────────────────────────── READ ROUTES ───────────────────────────
@@ -99,9 +71,9 @@ router.post("/mikrotik/connect", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { host, port, username, password } = parsed.data;
+  const { host, port, username, password, transport } = parsed.data;
   try {
-    const result = await withClient(host, port, username, password, async (client) => {
+    const result = await withClient({host, port, username, password, transport}, async (client) => {
       const sysRes = await client.menu("/system/resource").getOnly();
       let identityName: string | null = null;
       try {
@@ -131,9 +103,9 @@ router.post("/mikrotik/system", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { host, port, username, password } = parsed.data;
+  const { host, port, username, password, transport } = parsed.data;
   try {
-    const d = await withClient(host, port, username, password, async (client) => {
+    const d = await withClient({host, port, username, password, transport}, async (client) => {
       return client.menu("/system/resource").getOnly() as Promise<Record<string, unknown>>;
     });
     res.json({
@@ -162,9 +134,9 @@ router.post("/mikrotik/interfaces", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { host, port, username, password } = parsed.data;
+  const { host, port, username, password, transport } = parsed.data;
   try {
-    const items = await withClient(host, port, username, password, async (client) => {
+    const items = await withClient({host, port, username, password, transport}, async (client) => {
       return client.menu("/interface").get() as Promise<Record<string, unknown>[]>;
     });
     res.json(
@@ -190,9 +162,9 @@ router.post("/mikrotik/ip/addresses", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { host, port, username, password } = parsed.data;
+  const { host, port, username, password, transport } = parsed.data;
   try {
-    const items = await withClient(host, port, username, password, async (client) => {
+    const items = await withClient({host, port, username, password, transport}, async (client) => {
       return client.menu("/ip/address").get() as Promise<Record<string, unknown>[]>;
     });
     res.json(
@@ -217,9 +189,9 @@ router.post("/mikrotik/firewall/rules", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { host, port, username, password } = parsed.data;
+  const { host, port, username, password, transport } = parsed.data;
   try {
-    const items = await withClient(host, port, username, password, async (client) => {
+    const items = await withClient({host, port, username, password, transport}, async (client) => {
       return client.menu("/ip/firewall/filter").get() as Promise<Record<string, unknown>[]>;
     });
     res.json(
@@ -248,9 +220,9 @@ router.post("/mikrotik/dhcp/leases", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { host, port, username, password } = parsed.data;
+  const { host, port, username, password, transport } = parsed.data;
   try {
-    const items = await withClient(host, port, username, password, async (client) => {
+    const items = await withClient({host, port, username, password, transport}, async (client) => {
       return client.menu("/ip/dhcp-server/lease").get() as Promise<Record<string, unknown>[]>;
     });
     res.json(
@@ -276,9 +248,9 @@ router.post("/mikrotik/wireless/clients", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { host, port, username, password } = parsed.data;
+  const { host, port, username, password, transport } = parsed.data;
   try {
-    const items = await withClient(host, port, username, password, async (client) => {
+    const items = await withClient({host, port, username, password, transport}, async (client) => {
       return client.menu("/interface/wireless/registration-table").get() as Promise<Record<string, unknown>[]>;
     });
     res.json(
@@ -311,9 +283,17 @@ router.post("/mikrotik/wireless/clients", async (req, res): Promise<void> => {
  *   /menu/path disable 0
  */
 async function executeRosCommand(
-  client: Awaited<ReturnType<RouterOSClient["connect"]>>,
+  client: RouterAdapter,
   command: string
 ): Promise<string> {
+  // SSH transport: pass the line straight through to the shell — RouterOS
+  // already understands the full CLI grammar, no need to re-parse it.
+  if (client.transport === "ssh") {
+    const trimmed = command.trim();
+    if (!trimmed || trimmed.startsWith("#")) return "";
+    const out = await client.exec(trimmed);
+    return out.replace(/\r/g, "").trimEnd() || "(no output)";
+  }
   const trimmed = command.trim();
   if (!trimmed || trimmed.startsWith("#")) return "";
 
@@ -434,9 +414,9 @@ router.post("/mikrotik/command", ...requireWriter(), async (req, res): Promise<v
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { host, port, username, password, command } = parsed.data;
+  const { host, port, username, password, transport, command } = parsed.data;
   try {
-    const result = await withClient(host, port, username, password, async (client) => {
+    const result = await withClient({host, port, username, password, transport}, async (client) => {
       return executeRosCommand(client, command);
     });
     res.json({ output: result as string, success: true });
@@ -484,11 +464,11 @@ function recordToAdd(rec: Record<string, unknown>): string {
 
 // Safely fetch a menu section — returns [] if the section doesn't exist
 async function safeGet(
-  client: Awaited<ReturnType<RouterOSClient["connect"]>>,
+  client: RouterAdapter,
   path: string
 ): Promise<Record<string, unknown>[]> {
   try {
-    const items = await client.menu(path).get() as Record<string, unknown>[];
+    const items = await client.menu(path).get();
     return items;
   } catch {
     return [];
@@ -497,11 +477,11 @@ async function safeGet(
 
 // Safely fetch a single-record menu (like /ip/dns settings)
 async function safeGetOne(
-  client: Awaited<ReturnType<RouterOSClient["connect"]>>,
+  client: RouterAdapter,
   path: string
 ): Promise<Record<string, unknown> | null> {
   try {
-    const items = await client.menu(path).get() as Record<string, unknown>[];
+    const items = await client.menu(path).get();
     return items[0] ?? null;
   } catch {
     return null;
@@ -538,9 +518,9 @@ function section(path: string, records: Record<string, unknown>[], isSet = false
 router.post("/mikrotik/export", async (req, res): Promise<void> => {
   const parsed = WriteBase.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { host, port, username, password } = parsed.data;
+  const { host, port, username, password, transport } = parsed.data;
   try {
-    const rsc = await withClient(host, port, username, password, async (client) => {
+    const rsc = await withClient({host, port, username, password, transport}, async (client) => {
       const [
         identity,
         bridges,
@@ -742,9 +722,9 @@ router.post("/mikrotik/export", async (req, res): Promise<void> => {
 router.post("/mikrotik/interface/toggle", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string(), disabled: z.boolean() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { host, port, username, password, id, disabled } = parsed.data;
+  const { host, port, username, password, transport, id, disabled } = parsed.data;
   try {
-    await withClient(host, port, username, password, async (client) => {
+    await withClient({host, port, username, password, transport}, async (client) => {
       const menu = client.menu("/interface") as any;
       if (disabled) { await menu.disable(id); } else { await menu.enable(id); }
     });
@@ -755,9 +735,9 @@ router.post("/mikrotik/interface/toggle", ...requireWriter(), async (req, res): 
 router.post("/mikrotik/interface/comment", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string(), comment: z.string() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { host, port, username, password, id, comment } = parsed.data;
+  const { host, port, username, password, transport, id, comment } = parsed.data;
   try {
-    await withClient(host, port, username, password, async (client) => {
+    await withClient({host, port, username, password, transport}, async (client) => {
       await (client.menu("/interface") as any).update({ comment }, id);
     });
     res.json({ success: true });
@@ -772,9 +752,9 @@ router.post("/mikrotik/ip/address/add", ...requireWriter(), async (req, res): Pr
     comment: z.string().optional(),
   }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { host, port, username, password, address, interface: iface, comment } = parsed.data;
+  const { host, port, username, password, transport, address, interface: iface, comment } = parsed.data;
   try {
-    const result = await withClient(host, port, username, password, async (client) => {
+    const result = await withClient({host, port, username, password, transport}, async (client) => {
       return client.menu("/ip/address").add({
         address,
         interface: iface,
@@ -788,9 +768,9 @@ router.post("/mikrotik/ip/address/add", ...requireWriter(), async (req, res): Pr
 router.post("/mikrotik/ip/address/remove", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { host, port, username, password, id } = parsed.data;
+  const { host, port, username, password, transport, id } = parsed.data;
   try {
-    await withClient(host, port, username, password, async (client) => {
+    await withClient({host, port, username, password, transport}, async (client) => {
       await (client.menu("/ip/address") as any).remove(id);
     });
     res.json({ success: true });
@@ -800,9 +780,9 @@ router.post("/mikrotik/ip/address/remove", ...requireWriter(), async (req, res):
 router.post("/mikrotik/ip/address/toggle", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string(), disabled: z.boolean() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { host, port, username, password, id, disabled } = parsed.data;
+  const { host, port, username, password, transport, id, disabled } = parsed.data;
   try {
-    await withClient(host, port, username, password, async (client) => {
+    await withClient({host, port, username, password, transport}, async (client) => {
       const menu = client.menu("/ip/address") as any;
       if (disabled) { await menu.disable(id); } else { await menu.enable(id); }
     });
@@ -823,9 +803,9 @@ router.post("/mikrotik/firewall/filter/add", ...requireWriter(), async (req, res
     comment: z.string().optional(),
   }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { host, port, username, password, chain, action, protocol, srcAddress, dstAddress, dstPort, inInterface, comment } = parsed.data;
+  const { host, port, username, password, transport, chain, action, protocol, srcAddress, dstAddress, dstPort, inInterface, comment } = parsed.data;
   try {
-    const result = await withClient(host, port, username, password, async (client) => {
+    const result = await withClient({host, port, username, password, transport}, async (client) => {
       const entry: Record<string, string> = { chain, action };
       if (protocol) entry["protocol"] = protocol;
       if (srcAddress) entry["src-address"] = srcAddress;
@@ -842,9 +822,9 @@ router.post("/mikrotik/firewall/filter/add", ...requireWriter(), async (req, res
 router.post("/mikrotik/firewall/filter/remove", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { host, port, username, password, id } = parsed.data;
+  const { host, port, username, password, transport, id } = parsed.data;
   try {
-    await withClient(host, port, username, password, async (client) => {
+    await withClient({host, port, username, password, transport}, async (client) => {
       await (client.menu("/ip/firewall/filter") as any).remove(id);
     });
     res.json({ success: true });
@@ -854,9 +834,9 @@ router.post("/mikrotik/firewall/filter/remove", ...requireWriter(), async (req, 
 router.post("/mikrotik/firewall/filter/toggle", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string(), disabled: z.boolean() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { host, port, username, password, id, disabled } = parsed.data;
+  const { host, port, username, password, transport, id, disabled } = parsed.data;
   try {
-    await withClient(host, port, username, password, async (client) => {
+    await withClient({host, port, username, password, transport}, async (client) => {
       const menu = client.menu("/ip/firewall/filter") as any;
       if (disabled) { await menu.disable(id); } else { await menu.enable(id); }
     });
@@ -868,9 +848,9 @@ router.post("/mikrotik/firewall/filter/toggle", ...requireWriter(), async (req, 
 router.post("/mikrotik/dhcp/lease/remove", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { host, port, username, password, id } = parsed.data;
+  const { host, port, username, password, transport, id } = parsed.data;
   try {
-    await withClient(host, port, username, password, async (client) => {
+    await withClient({host, port, username, password, transport}, async (client) => {
       await (client.menu("/ip/dhcp-server/lease") as any).remove(id);
     });
     res.json({ success: true });
@@ -880,9 +860,9 @@ router.post("/mikrotik/dhcp/lease/remove", ...requireWriter(), async (req, res):
 router.post("/mikrotik/dhcp/lease/make-static", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  const { host, port, username, password, id } = parsed.data;
+  const { host, port, username, password, transport, id } = parsed.data;
   try {
-    await withClient(host, port, username, password, async (client) => {
+    await withClient({host, port, username, password, transport}, async (client) => {
       // RouterOS make-static command
       await (client.menu("/ip/dhcp-server/lease") as any).update({ "make-static": "yes" }, id);
     });

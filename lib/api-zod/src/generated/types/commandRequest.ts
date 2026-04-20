@@ -5,11 +5,13 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { CommandRequestTransport } from "./commandRequestTransport";
 
 export interface CommandRequest {
   host: string;
   port?: number;
   username: string;
   password: string;
+  transport?: CommandRequestTransport;
   command: string;
 }

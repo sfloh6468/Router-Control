@@ -7,6 +7,7 @@
  */
 
 export * from "./commandRequest";
+export * from "./commandRequestTransport";
 export * from "./commandResult";
 export * from "./connectionResult";
 export * from "./dhcpLease";
@@ -15,6 +16,7 @@ export * from "./firewallRule";
 export * from "./healthStatus";
 export * from "./ipAddress";
 export * from "./routerCredentials";
+export * from "./routerCredentialsTransport";
 export * from "./routerInterface";
 export * from "./systemResource";
 export * from "./wirelessClient";

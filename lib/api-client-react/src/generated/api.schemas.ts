@@ -13,11 +13,41 @@ export interface ErrorResponse {
   error: string;
 }
 
+/**
+ * Connection transport.
+  - api      = MikroTik binary API (default port 8728)
+  - api-ssl  = MikroTik binary API over TLS (default port 8729) — DEFAULT
+  - rest     = Webfig REST API over HTTP (default port 80)
+  - rest-tls = Webfig REST API over HTTPS (default port 443)
+  - ssh      = SSH (default port 22) — terminal + chat only,
+               dashboards not supported
+
+ */
+export type RouterCredentialsTransport =
+  (typeof RouterCredentialsTransport)[keyof typeof RouterCredentialsTransport];
+
+export const RouterCredentialsTransport = {
+  api: "api",
+  "api-ssl": "api-ssl",
+  rest: "rest",
+  "rest-tls": "rest-tls",
+  ssh: "ssh",
+} as const;
+
 export interface RouterCredentials {
   host: string;
   port?: number;
   username: string;
   password: string;
+  /** Connection transport.
+  - api      = MikroTik binary API (default port 8728)
+  - api-ssl  = MikroTik binary API over TLS (default port 8729) — DEFAULT
+  - rest     = Webfig REST API over HTTP (default port 80)
+  - rest-tls = Webfig REST API over HTTPS (default port 443)
+  - ssh      = SSH (default port 22) — terminal + chat only,
+               dashboards not supported
+ */
+  transport?: RouterCredentialsTransport;
 }
 
 export interface ConnectionResult {
@@ -157,11 +187,23 @@ export interface WirelessClient {
   ssid?: string | null;
 }
 
+export type CommandRequestTransport =
+  (typeof CommandRequestTransport)[keyof typeof CommandRequestTransport];
+
+export const CommandRequestTransport = {
+  api: "api",
+  "api-ssl": "api-ssl",
+  rest: "rest",
+  "rest-tls": "rest-tls",
+  ssh: "ssh",
+} as const;
+
 export interface CommandRequest {
   host: string;
   port?: number;
   username: string;
   password: string;
+  transport?: CommandRequestTransport;
   command: string;
 }
 
