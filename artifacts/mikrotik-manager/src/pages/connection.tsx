@@ -14,7 +14,6 @@ const TRANSPORTS = [
   { value: "api-ssl", label: "API-SSL  (8729)", port: 8729, hint: "MikroTik binary API over TLS — recommended", recommended: true },
   { value: "api",     label: "API  (8728)",     port: 8728, hint: "MikroTik binary API, no TLS" },
   { value: "rest-tls", label: "REST / Webfig HTTPS  (443)", port: 443, hint: "Webfig REST API over HTTPS — works through most firewalls (RouterOS 7.1+)" },
-  { value: "rest",    label: "REST / Webfig HTTP  (80)",   port: 80,  hint: "Webfig REST API plain HTTP (RouterOS 7.1+)" },
   { value: "ssh",     label: "SSH  (22)",       port: 22,  hint: "SSH — terminal & AI chat only; dashboards not available" },
 ] as const;
 
@@ -25,7 +24,7 @@ const connectionSchema = z.object({
   port: z.coerce.number().optional().default(8729),
   username: z.string().min(1, "Username is required"),
   password: z.string(),
-  transport: z.enum(["api", "api-ssl", "rest", "rest-tls", "ssh"]).default("api-ssl"),
+  transport: z.enum(["api", "api-ssl", "rest-tls", "ssh"]).default("api-ssl"),
 });
 
 type ConnectionFormValues = z.infer<typeof connectionSchema>;
