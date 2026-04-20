@@ -193,8 +193,26 @@ async function buildRestAdapter(creds: RouterCreds, transport: Transport): Promi
       },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     };
-    // Pass our self-signed-tolerant agent through node's undici dispatcher.
-    if (httpsAgent) (init as any).dispatcher = undefined;
+    // Build a diagnostic-rich error message that exposes server identity.
+    function buildRestError(
+      status: number,
+      statusText: string,
+      bodyText: string,
+      headers: Record<string, string | undefined>,
+    ): Error {
+      let detail = bodyText.trim();
+      try {
+        const j = JSON.parse(bodyText);
+        detail = (j.detail ?? j.message ?? j.error ?? bodyText).toString().trim();
+      } catch { /* keep raw text */ }
+      const server = headers["server"] || headers["Server"] || "unknown";
+      const ctype = headers["content-type"] || headers["Content-Type"] || "unknown";
+      const hint = looksLikeWrongServer(status, server, ctype, detail);
+      const head = `REST ${method} ${path} → ${status} ${statusText}`.trim();
+      const tail = `[server=${server}, content-type=${ctype}]`;
+      return new Error(`${head} — ${detail || "(empty body)"} ${tail}${hint ? `\nHint: ${hint}` : ""}`);
+    }
+
     // Fall back to node:https for HTTPS to honor rejectUnauthorized.
     if (useTls) {
       return await new Promise<T>((resolve, reject) => {
@@ -211,10 +229,14 @@ async function buildRestAdapter(creds: RouterCreds, transport: Transport): Promi
           resp.on("data", (c) => chunks.push(c));
           resp.on("end", () => {
             const text = Buffer.concat(chunks).toString("utf-8");
-            if ((resp.statusCode ?? 0) >= 400) {
-              let msg = text;
-              try { msg = (JSON.parse(text) as any).detail ?? (JSON.parse(text) as any).message ?? text; } catch { /* keep text */ }
-              reject(new Error(`REST ${method} ${path} → ${resp.statusCode} ${msg}`));
+            const status = resp.statusCode ?? 0;
+            if (status >= 400) {
+              reject(buildRestError(
+                status,
+                resp.statusMessage || "",
+                text,
+                resp.headers as Record<string, string | undefined>,
+              ));
               return;
             }
             try { resolve(text ? JSON.parse(text) as T : (undefined as T)); }
@@ -230,13 +252,41 @@ async function buildRestAdapter(creds: RouterCreds, transport: Transport): Promi
     const resp = await fetch(url, init as RequestInit);
     if (!resp.ok) {
       const text = await resp.text();
-      let msg = text;
-      try { msg = (JSON.parse(text) as any).detail ?? (JSON.parse(text) as any).message ?? text; } catch { /* keep text */ }
-      throw new Error(`REST ${method} ${path} → ${resp.status} ${msg}`);
+      const headers: Record<string, string> = {};
+      resp.headers.forEach((v, k) => { headers[k] = v; });
+      throw buildRestError(resp.status, resp.statusText, text, headers);
     }
     const text = await resp.text();
     if (!text) return undefined as T;
     try { return JSON.parse(text) as T; } catch { return text as unknown as T; }
+  }
+
+  // Spot common misconfigurations so the user knows what to fix.
+  function looksLikeWrongServer(
+    status: number,
+    server: string,
+    ctype: string,
+    body: string,
+  ): string | null {
+    const s = (server || "").toLowerCase();
+    const c = (ctype || "").toLowerCase();
+    const b = (body || "").toLowerCase();
+    if (status === 502 && (b.includes("bad gateway") || b.includes("502"))) {
+      return "RouterOS plain-HTTP REST often returns 502 Bad Gateway. " +
+             "Try REST/Webfig HTTPS instead (transport: rest-tls, default port 443; your router's www-ssl is on 4433).";
+    }
+    if (status === 404 && c.includes("text/html")) {
+      return "The endpoint returned HTML, not JSON — the www service may not have REST enabled, " +
+             "or RouterOS is older than 7.1. Try API-SSL on 8729 instead.";
+    }
+    if (s.includes("nginx") || s.includes("apache") || s.includes("cloudflare")) {
+      return `The response came from "${server}" — that is not RouterOS. Something in front of your ` +
+             "router (CDN, reverse proxy, ISP captive portal) is intercepting the request.";
+    }
+    if (status === 401) {
+      return "Authentication failed. Check the username/password and that the user has the 'api' group permission.";
+    }
+    return null;
   }
 
   // Sanity-check the connection up front by fetching identity.
