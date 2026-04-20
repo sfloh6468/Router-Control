@@ -143,6 +143,43 @@ export function ChatSidebar({
   const removeAttachment = (i: number) =>
     setAttachments((prev) => prev.filter((_, idx) => idx !== i));
 
+  // Drag-and-drop state
+  const [isDragOver, setIsDragOver] = useState(false);
+  const dragDepth = useRef(0);
+
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer.types ?? []).includes("Files")) return;
+    e.preventDefault();
+    dragDepth.current += 1;
+    setIsDragOver(true);
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    if (!Array.from(e.dataTransfer.types ?? []).includes("Files")) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "copy";
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setIsDragOver(false);
+  };
+  const onDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragDepth.current = 0;
+    setIsDragOver(false);
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) void handleFiles(files);
+  };
+
+  // Paste image/file from clipboard
+  const onPaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const items = e.clipboardData?.files;
+    if (items && items.length > 0) {
+      e.preventDefault();
+      void handleFiles(items);
+    }
+  };
+
   const handleSubmit = async (e?: React.FormEvent) => {
     e?.preventDefault();
     if (isStreaming) return;
@@ -279,7 +316,21 @@ export function ChatSidebar({
         </div>
 
         {/* Composer */}
-        <form onSubmit={handleSubmit} className="border-t border-border p-3 space-y-2">
+        <form
+          onSubmit={handleSubmit}
+          onDragEnter={onDragEnter}
+          onDragOver={onDragOver}
+          onDragLeave={onDragLeave}
+          onDrop={onDrop}
+          className="relative border-t border-border p-3 space-y-2"
+        >
+          {isDragOver && (
+            <div className="pointer-events-none absolute inset-1 z-10 rounded-lg border-2 border-dashed border-primary bg-primary/10 backdrop-blur-sm flex flex-col items-center justify-center text-primary">
+              <Paperclip className="h-6 w-6 mb-1" />
+              <div className="text-sm font-semibold">Drop to attach</div>
+              <div className="text-[11px] text-muted-foreground">images, configs, logs, .rsc, .txt, .json</div>
+            </div>
+          )}
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {attachments.map((a, i) => (
@@ -309,6 +360,7 @@ export function ChatSidebar({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKey}
+              onPaste={onPaste}
               placeholder={
                 credentials
                   ? "Describe what you want to do, diagnose, or fix…"
