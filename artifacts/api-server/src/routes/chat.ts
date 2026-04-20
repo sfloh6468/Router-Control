@@ -4,6 +4,11 @@ import { db, conversationsTable, messagesTable, type MessageAttachment, type Mes
 import { eq, and } from "drizzle-orm";
 import { requireUser } from "../middlewares/requireAuth";
 import { connectRouter, type RouterCreds } from "../lib/router-transport";
+import {
+  tcpProbe, tcpPing, dnsLookup, reverseDns, httpProbe,
+  asnLookup, rdapIp, rdapDomain, sandboxPublicInfo,
+  type DnsRecordType,
+} from "../lib/diagnostics";
 
 const router: IRouter = Router();
 
@@ -144,7 +149,17 @@ type ChatBody = {
 const SYSTEM_PROMPT = `You are an expert MikroTik / RouterOS network engineer and BGP operator embedded inside the "MikroTik Access" web app. Your job is to help the user diagnose, configure, and troubleshoot their MikroTik router live.
 
 ## How you operate
-- The user has connected to a router via API-SSL. You can issue RouterOS commands using the \`run_router_command\` tool. Each call opens a fresh API-SSL session, runs the command, and returns the result.
+- The user has connected to a router via API-SSL / REST / SSH. You can issue RouterOS commands using the \`run_router_command\` tool. Each call opens a fresh session, runs the command, and returns the result.
+- You ALSO have a suite of sandbox-side network probes that run from THIS server's vantage point on the public internet — independent of the user's router. These are invaluable for BGP/ISP work because they let you compare what the router sees vs what an arbitrary internet host sees:
+  - \`tcp_probe\` — single TCP "telnet" connect with latency
+  - \`tcp_ping\` — N TCP probes with min/avg/max/loss stats
+  - \`dns_lookup\` — A/AAAA/MX/TXT/NS/CNAME/SOA/CAA records
+  - \`reverse_dns\` — PTR for an IP
+  - \`http_probe\` — HTTP/HTTPS reach test with status, latency, redirect chain, TLS cert info
+  - \`asn_lookup\` — origin ASN and AS name for an IPv4 (Team Cymru)
+  - \`rdap_ip\` / \`rdap_domain\` — modern WHOIS for an IP block or domain
+  - \`sandbox_info\` — show this sandbox's public IP, ASN, and country (so you know where you're looking from)
+- For network reachability problems, ALWAYS probe from BOTH vantage points (router with /ping or /tool/traceroute, sandbox with the tools above) and compare results.
 - ALWAYS run diagnostic commands first to verify state before proposing changes. Don't guess — read the live config.
 - Show your work: explain what you're checking, run the command, summarise the finding, then proceed.
 - For any STATE-CHANGING command (add / set / remove / enable / disable / anything that mutates config), STOP and ask the user for explicit approval first. Show them the exact command and a rollback. Only after they say "yes" / "approved" / "go ahead" do you actually execute it.
@@ -185,20 +200,191 @@ const TOOLS: Anthropic.Tool[] = [
   {
     name: "run_router_command",
     description:
-      "Execute a single RouterOS command against the user's connected MikroTik router via API-SSL. Use this to read state (print/get) or, after explicit user approval, to change state (add/set/remove/enable/disable).",
+      "Execute a single RouterOS command against the user's connected MikroTik router. Use this to read state (print/get) or, after explicit user approval, to change state (add/set/remove/enable/disable). For ping/traceroute, ALWAYS include 'count=N' (e.g. 'count=4') so the command terminates.",
     input_schema: {
       type: "object",
       properties: {
         command: {
           type: "string",
           description:
-            "A RouterOS command in the form '<menu-path> <subcommand> [key=value ...]'. Examples: '/system/resource print', '/ip/address print', '/routing/bgp/peer print'.",
+            "A RouterOS command in the form '<menu-path> <subcommand> [key=value ...]'. Examples: '/system/resource print', '/ip/address print', '/routing/bgp/peer print', '/ping 1.1.1.1 count=4', '/tool/traceroute 8.8.8.8 count=1'.",
         },
       },
       required: ["command"],
     },
   },
+  {
+    name: "tcp_probe",
+    description: "From the sandbox vantage point, open a TCP connection to host:port with a timeout. Returns reachability and latency. Useful as 'telnet' replacement.",
+    input_schema: {
+      type: "object",
+      properties: {
+        host: { type: "string", description: "IP or hostname" },
+        port: { type: "integer", description: "TCP port (1-65535)" },
+        timeout_ms: { type: "integer", description: "Timeout in ms (default 5000)" },
+      },
+      required: ["host", "port"],
+    },
+  },
+  {
+    name: "tcp_ping",
+    description: "From the sandbox vantage point, perform N TCP probes to host:port and return min/avg/max latency and loss percentage. Use as a substitute for ICMP ping.",
+    input_schema: {
+      type: "object",
+      properties: {
+        host: { type: "string" },
+        port: { type: "integer" },
+        count: { type: "integer", description: "Number of probes (default 4, max 10)" },
+        timeout_ms: { type: "integer", description: "Per-probe timeout in ms (default 3000)" },
+      },
+      required: ["host", "port"],
+    },
+  },
+  {
+    name: "dns_lookup",
+    description: "Resolve DNS records (A, AAAA, MX, TXT, NS, CNAME, SOA, CAA, SRV) for a hostname from the sandbox.",
+    input_schema: {
+      type: "object",
+      properties: {
+        host: { type: "string" },
+        types: {
+          type: "array",
+          items: { type: "string", enum: ["A", "AAAA", "MX", "TXT", "NS", "CNAME", "SOA", "CAA", "SRV", "PTR"] },
+          description: "Record types to query (default: ['A','AAAA'])",
+        },
+      },
+      required: ["host"],
+    },
+  },
+  {
+    name: "reverse_dns",
+    description: "Look up the PTR record (reverse DNS) for an IP address from the sandbox.",
+    input_schema: {
+      type: "object",
+      properties: { ip: { type: "string" } },
+      required: ["ip"],
+    },
+  },
+  {
+    name: "http_probe",
+    description: "Make an HTTP/HTTPS request from the sandbox and return status, latency, headers, redirect chain, and TLS cert info if HTTPS. Use to verify whether a public endpoint is reachable from outside the user's network.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "Full URL including scheme" },
+        method: { type: "string", enum: ["GET", "HEAD", "OPTIONS"], description: "HTTP method (default GET)" },
+        follow_redirects: { type: "boolean", description: "Default true" },
+        timeout_ms: { type: "integer", description: "Default 10000" },
+        insecure_tls: { type: "boolean", description: "Skip cert validation (for self-signed). Default false." },
+      },
+      required: ["url"],
+    },
+  },
+  {
+    name: "asn_lookup",
+    description: "Look up the origin ASN, prefix, country, and AS name for an IPv4 address using Team Cymru. Essential for BGP debugging — tells you which network actually announces a route.",
+    input_schema: {
+      type: "object",
+      properties: { ip: { type: "string", description: "IPv4 address" } },
+      required: ["ip"],
+    },
+  },
+  {
+    name: "rdap_ip",
+    description: "Modern WHOIS lookup for an IP address via RDAP — returns allocation, organization, country, and contact info.",
+    input_schema: {
+      type: "object",
+      properties: { ip: { type: "string" } },
+      required: ["ip"],
+    },
+  },
+  {
+    name: "rdap_domain",
+    description: "Modern WHOIS lookup for a domain name via RDAP — returns registrar, status, nameservers, dates.",
+    input_schema: {
+      type: "object",
+      properties: { domain: { type: "string" } },
+      required: ["domain"],
+    },
+  },
+  {
+    name: "sandbox_info",
+    description: "Show this sandbox's public IP, ASN, and country — so you know what vantage point your sandbox-side probes are coming from.",
+    input_schema: { type: "object", properties: {} },
+  },
 ];
+
+// Dispatch a sandbox-side diagnostic tool. Returns formatted text output.
+async function runDiagnosticTool(
+  name: string,
+  input: Record<string, unknown>,
+): Promise<{ ok: true; output: unknown } | { ok: false; error: string }> {
+  try {
+    switch (name) {
+      case "tcp_probe": {
+        const r = await tcpProbe(
+          String(input.host),
+          Number(input.port),
+          input.timeout_ms !== undefined ? Number(input.timeout_ms) : undefined,
+        );
+        return { ok: true, output: r };
+      }
+      case "tcp_ping": {
+        const count = Math.min(Math.max(Number(input.count ?? 4), 1), 10);
+        const r = await tcpPing(
+          String(input.host),
+          Number(input.port),
+          count,
+          input.timeout_ms !== undefined ? Number(input.timeout_ms) : undefined,
+        );
+        return { ok: true, output: r };
+      }
+      case "dns_lookup": {
+        const types = (input.types as DnsRecordType[] | undefined) ?? ["A", "AAAA"];
+        const r = await dnsLookup(String(input.host), types);
+        return { ok: true, output: r };
+      }
+      case "reverse_dns": {
+        const r = await reverseDns(String(input.ip));
+        return { ok: true, output: { ip: input.ip, hostnames: r } };
+      }
+      case "http_probe": {
+        const r = await httpProbe(String(input.url), {
+          method: input.method as string | undefined,
+          followRedirects: input.follow_redirects as boolean | undefined,
+          timeoutMs: input.timeout_ms as number | undefined,
+          insecureTls: input.insecure_tls as boolean | undefined,
+        });
+        return { ok: true, output: r };
+      }
+      case "asn_lookup": {
+        const r = await asnLookup(String(input.ip));
+        return { ok: true, output: r };
+      }
+      case "rdap_ip": {
+        const r = await rdapIp(String(input.ip));
+        return { ok: true, output: r };
+      }
+      case "rdap_domain": {
+        const r = await rdapDomain(String(input.domain));
+        return { ok: true, output: r };
+      }
+      case "sandbox_info": {
+        const r = await sandboxPublicInfo();
+        return { ok: true, output: r };
+      }
+      default:
+        return { ok: false, error: `Unknown diagnostic tool: ${name}` };
+    }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+const DIAGNOSTIC_TOOLS = new Set([
+  "tcp_probe", "tcp_ping", "dns_lookup", "reverse_dns",
+  "http_probe", "asn_lookup", "rdap_ip", "rdap_domain", "sandbox_info",
+]);
 
 function sendEvent(res: Response, event: string, data: unknown) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
@@ -312,12 +498,32 @@ router.post("/chat/stream", requireUser, async (req: Request, res: Response): Pr
 
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const tu of toolUses) {
-        const cmd = String((tu.input as any)?.command ?? "");
+        // Sandbox-side diagnostic tools — no router required, no auth gating beyond requireUser.
+        if (DIAGNOSTIC_TOOLS.has(tu.name)) {
+          const inputObj = (tu.input as Record<string, unknown>) ?? {};
+          const label = `${tu.name}(${JSON.stringify(inputObj).slice(0, 120)})`;
+          const result = await runDiagnosticTool(tu.name, inputObj);
+          if (result.ok) {
+            const outText = typeof result.output === "string"
+              ? result.output
+              : JSON.stringify(result.output, null, 2);
+            sendEvent(res, "tool_result", { id: tu.id, ok: true, output: outText });
+            toolCallLog.push({ id: tu.id, command: label, status: "ok", output: outText.slice(0, 50000) });
+            toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: outText.slice(0, 100000) });
+          } else {
+            sendEvent(res, "tool_result", { id: tu.id, ok: false, error: result.error });
+            toolCallLog.push({ id: tu.id, command: label, status: "error", error: result.error });
+            toolResults.push({ type: "tool_result", tool_use_id: tu.id, is_error: true, content: `Error: ${result.error}` });
+          }
+          continue;
+        }
 
         if (tu.name !== "run_router_command") {
           toolResults.push({ type: "tool_result", tool_use_id: tu.id, is_error: true, content: `Unknown tool: ${tu.name}` });
           continue;
         }
+
+        const cmd = String((tu.input as any)?.command ?? "");
 
         if (!body.credentials) {
           const err = "Not connected to a router. User must connect first.";
