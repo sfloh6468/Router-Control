@@ -17,6 +17,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useChat, type ChatAttachment, type ChatMessage } from "@/lib/chat-context";
 import { useRouterContext } from "@/lib/router-context";
 import { cn } from "@/lib/utils";
@@ -343,8 +344,13 @@ function MessageBubble({ m }: { m: ChatMessage }) {
                         prose-code:text-cyan-700 prose-code:bg-cyan-50 prose-code:px-1
                         prose-code:rounded prose-code:before:content-none prose-code:after:content-none
                         prose-li:my-0.5 prose-ul:my-2 prose-ol:my-2
-                        prose-strong:text-foreground prose-a:text-primary">
-          <ReactMarkdown>{m.text}</ReactMarkdown>
+                        prose-strong:text-foreground prose-a:text-primary
+                        prose-table:my-2 prose-table:text-[11px] prose-table:border-collapse
+                        prose-th:bg-slate-100 prose-th:border prose-th:border-slate-300 prose-th:px-2 prose-th:py-1 prose-th:text-left prose-th:font-semibold
+                        prose-td:border prose-td:border-slate-300 prose-td:px-2 prose-td:py-1 prose-td:align-top">
+          <div className="overflow-x-auto">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.text}</ReactMarkdown>
+          </div>
         </div>
       )}
     </div>
