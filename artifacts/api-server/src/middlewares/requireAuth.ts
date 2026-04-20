@@ -54,7 +54,23 @@ async function ensureAppUser(
   // Atomic check: are there any users at all?
   const countRow = await db.execute(sql`select count(*)::int as n from app_users`);
   const n = (countRow.rows[0] as { n: number } | undefined)?.n ?? 0;
-  const role: AppUserRole = n === 0 ? "superuser" : "read_only";
+  let role: AppUserRole = n === 0 ? "superuser" : "read_only";
+
+  // Email-continuity rule: if a previous Clerk record with the same email
+  // already had elevated privileges, inherit that role on this fresh sign-in.
+  // This handles cases where Clerk re-issues a new userId for the same human
+  // (e.g. after re-signup, dev↔prod key rotation, or OAuth re-link) so a
+  // returning superuser is not silently demoted to read_only.
+  if (email && role === "read_only") {
+    const sibling = await db
+      .select()
+      .from(appUsersTable)
+      .where(eq(appUsersTable.email, email))
+      .limit(1);
+    if (sibling[0]?.role === "superuser" || sibling[0]?.role === "read_write") {
+      role = sibling[0].role as AppUserRole;
+    }
+  }
 
   await db
     .insert(appUsersTable)
@@ -73,7 +89,28 @@ export function requireAuth(allowDisabled = false) {
       return;
     }
     try {
-      const { role, email, disabled } = await ensureAppUser(String(userId));
+      let { role, email, disabled } = await ensureAppUser(String(userId));
+      // Re-sync on every request: if this user's email matches an existing
+      // superuser/read_write row, lift this row to that level. This makes
+      // post-hoc promotions (e.g. you fixed the previous account) take
+      // effect on the very next request without manual DB edits.
+      if (email && role === "read_only") {
+        const sibling = await db
+          .select()
+          .from(appUsersTable)
+          .where(eq(appUsersTable.email, email))
+          .limit(2);
+        const elevated = sibling.find(
+          (s) => s.clerkUserId !== String(userId) && (s.role === "superuser" || s.role === "read_write"),
+        );
+        if (elevated) {
+          await db
+            .update(appUsersTable)
+            .set({ role: elevated.role as AppUserRole, updatedAt: new Date() })
+            .where(eq(appUsersTable.clerkUserId, String(userId)));
+          role = elevated.role as AppUserRole;
+        }
+      }
       if (disabled && !allowDisabled) {
         res.status(403).json({ error: "Your account has been disabled by an administrator." });
         return;
