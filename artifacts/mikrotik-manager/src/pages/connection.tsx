@@ -21,8 +21,9 @@ type ConnectionFormValues = z.infer<typeof connectionSchema>;
 
 export default function ConnectionPage() {
   const [, setLocation] = useLocation();
-  const { setCredentials } = useRouterContext();
+  const { setConnection } = useRouterContext();
   const connectMutation = useMikrotikConnect();
+  const apiBase = import.meta.env.BASE_URL.replace(/\/$/, "");
   
   const form = useForm<ConnectionFormValues>({
     resolver: zodResolver(connectionSchema),
@@ -36,12 +37,45 @@ export default function ConnectionPage() {
 
   const onSubmit = async (data: ConnectionFormValues) => {
     try {
-      const result = await connectMutation.mutateAsync(data);
+      const result = await connectMutation.mutateAsync(data) as {
+        success: boolean;
+        message?: string;
+        identity?: string | null;
+        routerOs?: string | null;
+        routerBoard?: string | null;
+      };
       if (result.success) {
-        setCredentials(data);
+        // Upsert a router profile for this user + host so chat history and
+        // trending data can be tied to it for future recall.
+        let profileId: number | null = null;
+        try {
+          const r = await fetch(`${apiBase}/api/profiles/upsert`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              host: data.host,
+              port: data.port,
+              username: data.username,
+              identity: result.identity ?? null,
+              routerOs: result.routerOs ?? null,
+              routerBoard: result.routerBoard ?? null,
+            }),
+          });
+          if (r.ok) {
+            const pj = await r.json();
+            profileId = pj.profile?.id ?? null;
+          }
+        } catch {
+          // profile persistence is non-fatal
+        }
+        setConnection(data, {
+          identity: result.identity ?? null,
+          routerOs: result.routerOs ?? null,
+          routerBoard: result.routerBoard ?? null,
+          profileId,
+        });
         setLocation("/dashboard");
       } else {
-        // Handle explicit logic failure from API
         form.setError("root", { message: result.message || "Connection failed" });
       }
     } catch (err: any) {
@@ -73,7 +107,7 @@ export default function ConnectionPage() {
             <div className="absolute inset-0 rounded-2xl glow-effect opacity-50" />
             <Activity className="h-8 w-8 text-primary relative z-10" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white">MikroTik Access</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">MikroTik Access</h1>
           <p className="text-muted-foreground mt-2 text-sm">
             Enter your router credentials to establish a secure management session.
           </p>
@@ -88,7 +122,7 @@ export default function ConnectionPage() {
                   <RouterIcon className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                   <Input 
                     {...form.register("host")} 
-                    className="pl-9 bg-black/20 border-white/10 text-white focus:border-primary/50" 
+                    className="pl-9 bg-background border-input text-foreground focus:border-primary/50" 
                     placeholder="192.168.88.1"
                   />
                 </div>
@@ -98,7 +132,7 @@ export default function ConnectionPage() {
                 <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Port</label>
                 <Input 
                   {...form.register("port")} 
-                  className="bg-black/20 border-white/10 text-white font-mono text-center focus:border-primary/50" 
+                  className="bg-background border-input text-foreground font-mono text-center focus:border-primary/50" 
                   placeholder="8729"
                 />
               </div>
@@ -106,15 +140,15 @@ export default function ConnectionPage() {
 
             {/* Port reference guide */}
             <div className="p-3 bg-blue-500/10 border border-blue-500/20 rounded-lg text-xs space-y-1.5">
-              <div className="flex items-center gap-1.5 text-blue-400 font-medium">
+              <div className="flex items-center gap-1.5 text-blue-700 font-medium">
                 <Info className="h-3.5 w-3.5 shrink-0" />
                 Port Reference (MikroTik IP Services)
               </div>
               <div className="grid grid-cols-2 gap-x-4 gap-y-1 text-muted-foreground">
-                <span><span className="font-mono text-white/80">8729</span> — API-SSL <span className="text-green-400">★ Recommended</span></span>
-                <span><span className="font-mono text-white/80">8728</span> — API (no TLS)</span>
+                <span><span className="font-mono text-foreground/80">8729</span> — API-SSL <span className="text-emerald-600">★ Recommended</span></span>
+                <span><span className="font-mono text-foreground/80">8728</span> — API (no TLS)</span>
               </div>
-              <div className="text-yellow-400/80 flex items-start gap-1.5 mt-1">
+              <div className="text-amber-700 flex items-start gap-1.5 mt-1">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                 If you get a timeout, your router firewall may be blocking port 8729 externally. Add a firewall rule: <span className="font-mono">/ip firewall filter add chain=input protocol=tcp dst-port=8729 action=accept</span>
               </div>
@@ -126,7 +160,7 @@ export default function ConnectionPage() {
                 <Shield className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input 
                   {...form.register("username")} 
-                  className="pl-9 bg-black/20 border-white/10 text-white focus:border-primary/50" 
+                  className="pl-9 bg-background border-input text-foreground focus:border-primary/50" 
                   placeholder="admin"
                 />
               </div>
@@ -138,7 +172,7 @@ export default function ConnectionPage() {
               <Input 
                 type="password"
                 {...form.register("password")} 
-                className="bg-black/20 border-white/10 text-white focus:border-primary/50" 
+                className="bg-background border-input text-foreground focus:border-primary/50" 
                 placeholder="••••••••"
               />
             </div>

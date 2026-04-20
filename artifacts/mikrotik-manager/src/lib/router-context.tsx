@@ -1,10 +1,20 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
+import React, { createContext, useContext, useState, ReactNode } from "react";
 import type { RouterCredentials } from "@workspace/api-client-react";
 
 const STORAGE_KEY = "mikrotik_credentials";
+const META_KEY = "mikrotik_router_meta";
+
+export type RouterMeta = {
+  identity: string | null;
+  routerOs?: string | null;
+  routerBoard?: string | null;
+  profileId?: number | null;
+};
 
 interface RouterContextType {
   credentials: RouterCredentials | null;
+  meta: RouterMeta;
+  setConnection: (creds: RouterCredentials, meta: RouterMeta) => void;
   setCredentials: (creds: RouterCredentials | null) => void;
   isConnected: boolean;
   disconnect: () => void;
@@ -15,37 +25,55 @@ const RouterContext = createContext<RouterContextType | undefined>(undefined);
 function loadCredentials(): RouterCredentials | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return null;
-    return JSON.parse(raw) as RouterCredentials;
+    return raw ? (JSON.parse(raw) as RouterCredentials) : null;
   } catch {
     return null;
   }
 }
-
-function saveCredentials(creds: RouterCredentials | null) {
-  if (creds) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(creds));
-  } else {
-    localStorage.removeItem(STORAGE_KEY);
+function loadMeta(): RouterMeta {
+  try {
+    const raw = localStorage.getItem(META_KEY);
+    return raw ? (JSON.parse(raw) as RouterMeta) : { identity: null };
+  } catch {
+    return { identity: null };
   }
+}
+
+function persist(creds: RouterCredentials | null, meta: RouterMeta) {
+  if (creds) localStorage.setItem(STORAGE_KEY, JSON.stringify(creds));
+  else localStorage.removeItem(STORAGE_KEY);
+  localStorage.setItem(META_KEY, JSON.stringify(meta));
 }
 
 export function RouterProvider({ children }: { children: ReactNode }) {
   const [credentials, setCredentialsState] = useState<RouterCredentials | null>(() => loadCredentials());
+  const [meta, setMetaState] = useState<RouterMeta>(() => loadMeta());
+
+  const setConnection = (creds: RouterCredentials, m: RouterMeta) => {
+    setCredentialsState(creds);
+    setMetaState(m);
+    persist(creds, m);
+  };
 
   const setCredentials = (creds: RouterCredentials | null) => {
     setCredentialsState(creds);
-    saveCredentials(creds);
+    if (!creds) {
+      const cleared = { identity: null };
+      setMetaState(cleared);
+      persist(null, cleared);
+    } else {
+      persist(creds, meta);
+    }
   };
 
-  const disconnect = () => {
-    setCredentials(null);
-  };
+  const disconnect = () => setCredentials(null);
 
   return (
-    <RouterContext.Provider 
-      value={{ 
-        credentials, 
+    <RouterContext.Provider
+      value={{
+        credentials,
+        meta,
+        setConnection,
         setCredentials,
         isConnected: !!credentials,
         disconnect,
@@ -57,9 +85,7 @@ export function RouterProvider({ children }: { children: ReactNode }) {
 }
 
 export function useRouterContext() {
-  const context = useContext(RouterContext);
-  if (context === undefined) {
-    throw new Error("useRouterContext must be used within a RouterProvider");
-  }
-  return context;
+  const ctx = useContext(RouterContext);
+  if (!ctx) throw new Error("useRouterContext must be used within a RouterProvider");
+  return ctx;
 }

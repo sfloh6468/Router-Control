@@ -2,15 +2,18 @@ import { Router, type IRouter } from "express";
 import healthRouter from "./health";
 import mikrotikRouter from "./mikrotik";
 import chatRouter from "./chat";
-import { requireAuth } from "../middlewares/requireAuth";
+import adminRouter from "./admin";
+import profilesRouter from "./profiles";
 
 const router: IRouter = Router();
 
 // Health endpoint stays public for liveness checks
 router.use(healthRouter);
 
-// All MikroTik and chat operations require an authenticated session
-router.use(requireAuth, mikrotikRouter);
-router.use(requireAuth, chatRouter);
+// Each subrouter applies its own auth + role middleware per-route.
+router.use(mikrotikRouter);
+router.use(chatRouter);
+router.use(adminRouter);
+router.use(profilesRouter);
 
 export default router;

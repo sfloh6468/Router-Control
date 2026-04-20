@@ -1,6 +1,9 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import Anthropic from "@anthropic-ai/sdk";
 import { RouterOSClient } from "routeros-client";
+import { db, conversationsTable, messagesTable, type MessageAttachment, type MessageToolCall } from "@workspace/db";
+import { eq, and } from "drizzle-orm";
+import { requireUser } from "../middlewares/requireAuth";
 
 const router: IRouter = Router();
 
@@ -33,8 +36,13 @@ function makeClient(c: Credentials) {
   });
 }
 
-// Run a single RouterOS command on a fresh connection. Returns either
-// the structured rows for a `print` query, or a plain string for actions.
+const READ_ONLY_SUBS = new Set(["print", "get", "export", "monitor-traffic", "monitor", "find"]);
+function isMutating(command: string): boolean {
+  const parts = command.trim().split(/\s+/);
+  const sub = (parts[1] ?? "print").toLowerCase();
+  return !READ_ONLY_SUBS.has(sub);
+}
+
 async function runRouterCommand(
   c: Credentials,
   command: string,
@@ -49,15 +57,12 @@ async function runRouterCommand(
 
   try {
     const trimmed = command.trim();
-    // Parse: "<menu-path> <subcommand?> <args...>"
-    // e.g. "/system/resource print", "/ip/address add address=1.2.3.4/24 interface=ether1"
     const parts = trimmed.split(/\s+/);
     let menuPath = parts[0];
     if (!menuPath.startsWith("/")) menuPath = "/" + menuPath;
     const sub = (parts[1] ?? "print").toLowerCase();
     const argTokens = parts.slice(2);
 
-    // Parse key=value tokens (values may be quoted)
     const args: Record<string, string> = {};
     let positional: string | undefined;
     for (const tok of argTokens) {
@@ -81,8 +86,7 @@ async function runRouterCommand(
       case "print":
       case "get":
       case "export": {
-        const rows = await menu.get();
-        output = rows;
+        output = await menu.get();
         break;
       }
       case "add": {
@@ -115,7 +119,6 @@ async function runRouterCommand(
         break;
       }
       default: {
-        // Try as a generic print
         try {
           output = await menu.get();
         } catch {
@@ -145,6 +148,13 @@ type ChatMessage = {
 type ChatBody = {
   messages: ChatMessage[];
   credentials?: Credentials;
+  conversationId?: number;
+  routerProfileId?: number;
+  // Lightweight metadata about the latest user turn (for persistence — DB
+  // does not need the full base64 image payload, only a description).
+  latestUserAttachments?: MessageAttachment[];
+  latestUserText?: string;
+  routerIdentity?: string | null;
 };
 
 const SYSTEM_PROMPT = `You are an expert MikroTik / RouterOS network engineer and BGP operator embedded inside the "MikroTik Access" web app. Your job is to help the user diagnose, configure, and troubleshoot their MikroTik router live.
@@ -157,6 +167,9 @@ const SYSTEM_PROMPT = `You are an expert MikroTik / RouterOS network engineer an
 - Read-only commands (print / get / export) you may run freely without asking.
 - If the user uploads a file (config export, log, screenshot of a CLI window or topology), analyse it carefully and explain what you see.
 - If the user uploads an image, describe what you observe (interface counters, error messages, topology, etc.) before proposing actions.
+
+## Memory
+- Past conversations on this router (with the router's identity name and host) are persisted. When the user references prior findings, treat them as authoritative context.
 
 ## Command syntax (important)
 The \`run_router_command\` tool expects commands in this form:
@@ -207,12 +220,15 @@ function sendEvent(res: Response, event: string, data: unknown) {
   res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
 }
 
-router.post("/chat/stream", async (req: Request, res: Response): Promise<void> => {
+router.post("/chat/stream", requireUser, async (req: Request, res: Response): Promise<void> => {
   const body = req.body as ChatBody;
   if (!body || !Array.isArray(body.messages)) {
     res.status(400).json({ error: "messages[] required" });
     return;
   }
+
+  const userId = req.userId!;
+  const isReadOnly = req.userRole === "read_only";
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -220,30 +236,67 @@ router.post("/chat/stream", async (req: Request, res: Response): Promise<void> =
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders?.();
 
-  // Heartbeat to keep proxies from closing the connection
   const heartbeat = setInterval(() => {
     try { res.write(": ping\n\n"); } catch { /* ignore */ }
   }, 15000);
-
   const cleanup = () => clearInterval(heartbeat);
   req.on("close", cleanup);
+
+  // Resolve / create the conversation row up front so we can persist as we go.
+  let conversationId = body.conversationId ?? null;
+  if (conversationId !== null) {
+    const existing = await db
+      .select()
+      .from(conversationsTable)
+      .where(and(eq(conversationsTable.id, conversationId), eq(conversationsTable.ownerUserId, userId)))
+      .limit(1);
+    if (!existing[0]) conversationId = null;
+  }
+  if (conversationId === null) {
+    const titleFromText = (body.latestUserText ?? "").slice(0, 80) || "New chat";
+    const created = await db
+      .insert(conversationsTable)
+      .values({
+        ownerUserId: userId,
+        routerProfileId: body.routerProfileId ?? null,
+        title: titleFromText,
+      })
+      .returning();
+    conversationId = created[0].id;
+  }
+  sendEvent(res, "conversation", { conversationId });
+
+  // Persist the user's latest turn immediately.
+  if (body.latestUserText !== undefined || (body.latestUserAttachments && body.latestUserAttachments.length)) {
+    await db.insert(messagesTable).values({
+      conversationId: conversationId!,
+      role: "user",
+      text: body.latestUserText ?? "",
+      attachments: body.latestUserAttachments ?? null,
+    });
+  }
 
   // Build Anthropic message history
   const history: Anthropic.MessageParam[] = body.messages.map((m) => ({
     role: m.role,
-    content: typeof m.content === "string"
-      ? m.content
-      : (m.content as any),
+    content: typeof m.content === "string" ? m.content : (m.content as any),
   }));
 
   const credentialNote = body.credentials
-    ? `\n\nThe user is currently connected to MikroTik router at ${body.credentials.host}:${body.credentials.port ?? 8728} as user "${body.credentials.username}". You may issue commands.`
+    ? `\n\nThe user is currently connected to MikroTik router at ${body.credentials.host}:${body.credentials.port ?? 8728} as user "${body.credentials.username}"${body.routerIdentity ? ` (system identity: "${body.routerIdentity}")` : ""}. You may issue commands.`
     : `\n\nThe user is NOT currently connected to a router. Tell them they must connect first via the Connection screen before you can run any commands.`;
 
-  const system = SYSTEM_PROMPT + credentialNote;
+  const roleNote = isReadOnly
+    ? `\n\nThe current user has READ-ONLY access. Do not attempt mutating commands (add/set/remove/enable/disable) — the server will reject them. Stick to print/get/export and offer recommendations the user can take to a privileged operator.`
+    : "";
+
+  const system = SYSTEM_PROMPT + credentialNote + roleNote;
+
+  // Accumulate the assistant turn(s) for persistence.
+  const assistantTextParts: string[] = [];
+  const toolCallLog: MessageToolCall[] = [];
 
   try {
-    // Multi-turn agentic loop: keep calling Claude until it stops requesting tools
     for (let turn = 0; turn < 20; turn++) {
       sendEvent(res, "turn_start", { turn });
 
@@ -255,79 +308,79 @@ router.post("/chat/stream", async (req: Request, res: Response): Promise<void> =
         messages: history,
       });
 
-      // Emit text blocks as they appear in this response
       const toolUses: Array<{ id: string; name: string; input: any }> = [];
       for (const block of response.content) {
         if (block.type === "text") {
           sendEvent(res, "text", { text: block.text });
+          assistantTextParts.push(block.text);
         } else if (block.type === "tool_use") {
           toolUses.push({ id: block.id, name: block.name, input: block.input });
-          sendEvent(res, "tool_use", {
-            id: block.id,
-            name: block.name,
-            input: block.input,
-          });
+          sendEvent(res, "tool_use", { id: block.id, name: block.name, input: block.input });
         }
       }
 
-      // Add assistant turn to history
       history.push({ role: "assistant", content: response.content as any });
 
       if (response.stop_reason !== "tool_use" || toolUses.length === 0) {
-        // Conversation complete
-        sendEvent(res, "done", { stop_reason: response.stop_reason });
+        sendEvent(res, "done", { stop_reason: response.stop_reason, conversationId });
         break;
       }
 
-      // Execute every tool the model called, then feed results back
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const tu of toolUses) {
+        const cmd = String((tu.input as any)?.command ?? "");
+
         if (tu.name !== "run_router_command") {
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: tu.id,
-            is_error: true,
-            content: `Unknown tool: ${tu.name}`,
-          });
+          toolResults.push({ type: "tool_result", tool_use_id: tu.id, is_error: true, content: `Unknown tool: ${tu.name}` });
           continue;
         }
 
         if (!body.credentials) {
           const err = "Not connected to a router. User must connect first.";
           sendEvent(res, "tool_result", { id: tu.id, ok: false, error: err });
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: tu.id,
-            is_error: true,
-            content: err,
-          });
+          toolCallLog.push({ id: tu.id, command: cmd, status: "error", error: err });
+          toolResults.push({ type: "tool_result", tool_use_id: tu.id, is_error: true, content: err });
           continue;
         }
 
-        const cmd = String((tu.input as any)?.command ?? "");
+        if (isReadOnly && isMutating(cmd)) {
+          const err = `Blocked: this command is mutating (${cmd}). Your role is read_only — ask a read_write or superuser to perform this change.`;
+          sendEvent(res, "tool_result", { id: tu.id, ok: false, error: err });
+          toolCallLog.push({ id: tu.id, command: cmd, status: "error", error: err });
+          toolResults.push({ type: "tool_result", tool_use_id: tu.id, is_error: true, content: err });
+          continue;
+        }
+
         const result = await runRouterCommand(body.credentials, cmd);
         if (result.ok) {
           const outText = typeof result.output === "string"
             ? result.output
             : JSON.stringify(result.output, null, 2);
           sendEvent(res, "tool_result", { id: tu.id, ok: true, output: outText });
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: tu.id,
-            content: outText.slice(0, 100000), // hard cap
-          });
+          toolCallLog.push({ id: tu.id, command: cmd, status: "ok", output: outText.slice(0, 50000) });
+          toolResults.push({ type: "tool_result", tool_use_id: tu.id, content: outText.slice(0, 100000) });
         } else {
           sendEvent(res, "tool_result", { id: tu.id, ok: false, error: result.error });
-          toolResults.push({
-            type: "tool_result",
-            tool_use_id: tu.id,
-            is_error: true,
-            content: `Error: ${result.error}`,
-          });
+          toolCallLog.push({ id: tu.id, command: cmd, status: "error", error: result.error });
+          toolResults.push({ type: "tool_result", tool_use_id: tu.id, is_error: true, content: `Error: ${result.error}` });
         }
       }
 
       history.push({ role: "user", content: toolResults });
+    }
+
+    // Persist the assistant turn.
+    if (assistantTextParts.length || toolCallLog.length) {
+      await db.insert(messagesTable).values({
+        conversationId: conversationId!,
+        role: "assistant",
+        text: assistantTextParts.join("\n\n"),
+        toolCalls: toolCallLog.length ? toolCallLog : null,
+      });
+      await db
+        .update(conversationsTable)
+        .set({ updatedAt: new Date() })
+        .where(eq(conversationsTable.id, conversationId!));
     }
 
     cleanup();
@@ -336,6 +389,17 @@ router.post("/chat/stream", async (req: Request, res: Response): Promise<void> =
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[chat] error:", msg, err);
     sendEvent(res, "error", { error: msg });
+    // Best-effort persist what we have so the chat history isn't lost.
+    if (assistantTextParts.length || toolCallLog.length) {
+      try {
+        await db.insert(messagesTable).values({
+          conversationId: conversationId!,
+          role: "assistant",
+          text: assistantTextParts.join("\n\n") + `\n\n[error: ${msg}]`,
+          toolCalls: toolCallLog.length ? toolCallLog : null,
+        });
+      } catch { /* ignore */ }
+    }
     cleanup();
     res.end();
   }

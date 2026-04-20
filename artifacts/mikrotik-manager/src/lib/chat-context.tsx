@@ -1,11 +1,14 @@
-import React, { createContext, useCallback, useContext, useRef, useState, ReactNode } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState, ReactNode } from "react";
 import type { RouterCredentials } from "@workspace/api-client-react";
+import { useRouterContext } from "@/lib/router-context";
 
 export type ChatAttachment = {
   kind: "image" | "text";
   name: string;
   mediaType: string;
-  data: string; // base64 for image, raw text for text
+  // base64 for image, raw text for text. Optional because reloaded history
+  // from the server only carries metadata, not the original payload.
+  data?: string;
 };
 
 export type ToolCall = {
@@ -48,12 +51,63 @@ function uid(prefix: string): string {
 export function ChatProvider({ children }: { children: ReactNode }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [conversationId, setConversationId] = useState<number | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const { meta } = useRouterContext();
+  const profileId = meta.profileId ?? null;
 
-  const reset = useCallback(() => {
+  // When the user switches routers, load the most recent conversation for
+  // that router's profile so chat history persists across reconnects.
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      if (profileId == null) {
+        setMessages([]);
+        setConversationId(null);
+        return;
+      }
+      try {
+        const r = await fetch(`${apiBase}/api/conversations?profileId=${profileId}`);
+        if (!r.ok) return;
+        const j = await r.json() as { conversations: Array<{ id: number }> };
+        const latest = j.conversations[0];
+        if (!latest) {
+          if (!cancelled) {
+            setMessages([]);
+            setConversationId(null);
+          }
+          return;
+        }
+        const r2 = await fetch(`${apiBase}/api/conversations/${latest.id}`);
+        if (!r2.ok) return;
+        const j2 = await r2.json() as {
+          conversation: { id: number };
+          messages: Array<{ id: number; role: string; text: string; attachments: ChatAttachment[] | null; toolCalls: ToolCall[] | null; createdAt: string }>;
+        };
+        if (cancelled) return;
+        setConversationId(j2.conversation.id);
+        setMessages(j2.messages.map((m) => ({
+          id: `db_${m.id}`,
+          role: m.role as "user" | "assistant",
+          text: m.text,
+          attachments: m.attachments ?? undefined,
+          toolCalls: m.toolCalls ?? undefined,
+          createdAt: new Date(m.createdAt).getTime(),
+        })));
+      } catch {
+        // ignore
+      }
+    }
+    load();
+    return () => { cancelled = true; };
+  }, [profileId]);
+
+  const reset = useCallback(async () => {
     abortRef.current?.abort();
     setMessages([]);
     setIsStreaming(false);
+    // Start a fresh conversation row on next send
+    setConversationId(null);
   }, []);
 
   const cancel = useCallback(() => {
@@ -91,7 +145,10 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         }
         const blocks: any[] = [];
         for (const a of m.attachments ?? []) {
-          if (a.kind === "image") {
+          // Persisted history only stores attachment metadata, not the bytes.
+          // Skip image blocks where we don't have the actual base64 data so we
+          // don't send malformed image content to Claude on a continued turn.
+          if (a.kind === "image" && a.data) {
             blocks.push({
               type: "image",
               source: { type: "base64", media_type: a.mediaType, data: a.data },
@@ -101,8 +158,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         const textParts: string[] = [];
         if (m.text) textParts.push(m.text);
         for (const a of m.attachments ?? []) {
-          if (a.kind === "text") {
+          if (a.kind === "text" && a.data) {
             textParts.push(`\n\n--- Attached file: ${a.name} ---\n${a.data}\n--- end ${a.name} ---`);
+          } else if (!a.data) {
+            // Reference-only mention so Claude knows an attachment existed.
+            textParts.push(`\n\n[previously attached ${a.kind}: ${a.name}]`);
           }
         }
         if (textParts.length > 0) blocks.push({ type: "text", text: textParts.join("") });
@@ -112,11 +172,24 @@ export function ChatProvider({ children }: { children: ReactNode }) {
       const ac = new AbortController();
       abortRef.current = ac;
 
+      // Persistence-friendly metadata about the latest user turn
+      const latestUserAttachments = (attachments ?? []).map((a) => ({
+        kind: a.kind, name: a.name, mediaType: a.mediaType,
+      }));
+
       try {
         const res = await fetch(`${apiBase}/api/chat/stream`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ messages: wireMessages, credentials }),
+          body: JSON.stringify({
+            messages: wireMessages,
+            credentials,
+            conversationId,
+            routerProfileId: profileId,
+            routerIdentity: meta.identity ?? null,
+            latestUserText: text,
+            latestUserAttachments,
+          }),
           signal: ac.signal,
         });
 
@@ -161,6 +234,11 @@ export function ChatProvider({ children }: { children: ReactNode }) {
               if (!last || last.role !== "assistant") return next;
               const updated = { ...last, toolCalls: [...(last.toolCalls ?? [])] };
               switch (event) {
+                case "conversation":
+                  if (typeof data.conversationId === "number") {
+                    setConversationId(data.conversationId);
+                  }
+                  return next;
                 case "text":
                   updated.text = (updated.text ?? "") + (data.text ?? "");
                   break;
@@ -211,7 +289,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         abortRef.current = null;
       }
     },
-    [messages],
+    [messages, conversationId, profileId, meta.identity],
   );
 
   return (

@@ -59,7 +59,7 @@ export function ChatSidebar({
   onOpenChange: (v: boolean) => void;
 }) {
   const { messages, isStreaming, send, reset, cancel } = useChat();
-  const { credentials } = useRouterContext();
+  const { credentials, meta } = useRouterContext();
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -141,19 +141,21 @@ export function ChatSidebar({
       {/* Sidebar */}
       <aside
         className={cn(
-          "flex flex-col border-l border-border/50 bg-card/50 backdrop-blur-xl shadow-2xl transition-all duration-300 ease-out overflow-hidden",
+          "flex flex-col border-l border-border bg-card shadow-xl transition-all duration-300 ease-out overflow-hidden",
           open ? "w-[420px]" : "w-0",
         )}
       >
-        <div className="flex items-center justify-between p-4 border-b border-border/50">
+        <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="h-8 w-8 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center shrink-0">
+            <div className="h-8 w-8 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0">
               <Bot className="h-4 w-4 text-primary" />
             </div>
             <div className="min-w-0">
               <h2 className="font-semibold text-sm leading-tight truncate">AI Assistant</h2>
-              <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">
-                {credentials ? `live · ${credentials.host}` : "no router connected"}
+              <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider truncate" title={credentials ? `${meta.identity ?? credentials.host}` : "no router"}>
+                {credentials
+                  ? `live · ${meta.identity ?? credentials.host}`
+                  : "no router connected"}
               </p>
             </div>
           </div>
@@ -162,7 +164,7 @@ export function ChatSidebar({
               <button
                 onClick={reset}
                 title="New conversation"
-                className="p-1.5 rounded hover:bg-white/5 text-muted-foreground hover:text-foreground"
+                className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
               >
                 <RefreshCw className="h-3.5 w-3.5" />
               </button>
@@ -170,7 +172,7 @@ export function ChatSidebar({
             <button
               onClick={() => onOpenChange(false)}
               title="Collapse"
-              className="p-1.5 rounded hover:bg-white/5 text-muted-foreground hover:text-foreground"
+              className="p-1.5 rounded hover:bg-muted text-muted-foreground hover:text-foreground"
             >
               <ChevronRight className="h-4 w-4" />
             </button>
@@ -196,7 +198,7 @@ export function ChatSidebar({
                   <button
                     key={s}
                     onClick={() => setInput(s)}
-                    className="w-full text-left text-xs px-3 py-2.5 rounded-lg bg-white/5 hover:bg-white/10 border border-border/50 text-muted-foreground hover:text-foreground transition-colors"
+                    className="w-full text-left text-xs px-3 py-2.5 rounded-lg bg-muted hover:bg-accent border border-border text-muted-foreground hover:text-foreground transition-colors"
                   >
                     {s}
                   </button>
@@ -215,7 +217,7 @@ export function ChatSidebar({
         </div>
 
         {/* Composer */}
-        <form onSubmit={handleSubmit} className="border-t border-border/50 p-3 space-y-2">
+        <form onSubmit={handleSubmit} className="border-t border-border p-3 space-y-2">
           {attachments.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {attachments.map((a, i) => (
@@ -251,7 +253,7 @@ export function ChatSidebar({
                   : "Connect to a router first, then ask me anything…"
               }
               rows={3}
-              className="w-full resize-none rounded-lg bg-black/30 border border-white/10 focus:border-primary/50 focus:outline-none text-sm p-3 pr-20 text-foreground placeholder:text-muted-foreground/60"
+              className="w-full resize-none rounded-lg bg-background border border-input focus:border-primary/60 focus:outline-none text-sm p-3 pr-20 text-foreground placeholder:text-muted-foreground/70"
             />
             <div className="absolute bottom-2 right-2 flex items-center gap-1">
               <input
@@ -304,14 +306,14 @@ function MessageBubble({ m }: { m: ChatMessage }) {
   if (m.role === "user") {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[88%] rounded-xl rounded-tr-sm bg-primary/15 border border-primary/30 px-3 py-2 text-sm space-y-2">
+        <div className="max-w-[88%] rounded-xl rounded-tr-sm bg-primary/10 border border-primary/30 px-3 py-2 text-sm space-y-2 text-foreground">
           {m.text && <div className="whitespace-pre-wrap break-words">{m.text}</div>}
           {m.attachments && m.attachments.length > 0 && (
             <div className="flex flex-wrap gap-1.5 pt-1">
               {m.attachments.map((a, i) => (
                 <div
                   key={i}
-                  className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-black/30 text-[11px]"
+                  className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-background/80 border border-border text-[11px]"
                 >
                   {a.kind === "image" ? (
                     <ImageIcon className="h-3 w-3" />
@@ -334,11 +336,11 @@ function MessageBubble({ m }: { m: ChatMessage }) {
         <ToolCallCard key={tc.id} tc={tc} />
       ))}
       {m.text && (
-        <div className="prose prose-invert prose-sm max-w-none text-sm leading-relaxed
+        <div className="prose prose-sm max-w-none text-sm leading-relaxed text-foreground
                         prose-p:my-2 prose-headings:mt-3 prose-headings:mb-1.5
-                        prose-pre:bg-black/40 prose-pre:border prose-pre:border-white/10
+                        prose-pre:bg-slate-900 prose-pre:text-slate-100 prose-pre:border prose-pre:border-slate-700
                         prose-pre:p-2.5 prose-pre:text-[11px] prose-pre:my-2
-                        prose-code:text-cyan-300 prose-code:bg-black/30 prose-code:px-1
+                        prose-code:text-cyan-700 prose-code:bg-cyan-50 prose-code:px-1
                         prose-code:rounded prose-code:before:content-none prose-code:after:content-none
                         prose-li:my-0.5 prose-ul:my-2 prose-ol:my-2
                         prose-strong:text-foreground prose-a:text-primary">
@@ -361,15 +363,15 @@ function ToolCallCard({ tc }: { tc: { id: string; command: string; status: strin
     );
 
   return (
-    <div className="rounded-lg border border-white/10 bg-black/30 overflow-hidden">
+    <div className="rounded-lg border border-border bg-muted/40 overflow-hidden">
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
-        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-white/5"
+        className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-accent"
       >
         <Terminal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
         {icon}
-        <code className="text-[11px] font-mono text-cyan-300 truncate flex-1">{tc.command}</code>
+        <code className="text-[11px] font-mono text-cyan-700 truncate flex-1">{tc.command}</code>
         <ChevronRight
           className={cn(
             "h-3 w-3 text-muted-foreground transition-transform shrink-0",
@@ -378,7 +380,7 @@ function ToolCallCard({ tc }: { tc: { id: string; command: string; status: strin
         />
       </button>
       {expanded && (tc.output || tc.error) && (
-        <pre className="text-[10.5px] leading-snug font-mono text-muted-foreground bg-black/40 p-2.5 overflow-x-auto max-h-64 border-t border-white/5">
+        <pre className="text-[10.5px] leading-snug font-mono text-slate-100 bg-slate-900 p-2.5 overflow-x-auto max-h-64 border-t border-slate-700">
           {tc.error ?? tc.output}
         </pre>
       )}

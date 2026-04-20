@@ -11,8 +11,13 @@ import {
   GetWirelessClientsBody,
   RunCommandBody,
 } from "@workspace/api-zod";
+import { requireUser, requireWriter } from "../middlewares/requireAuth";
 
 const router: IRouter = Router();
+
+// Read-only endpoints: any signed-in (non-disabled) user.
+// Mutating endpoints: read_write or superuser only.
+router.use(requireUser);
 
 const API_SSL_PORTS = [8729, 8728 + 1];
 
@@ -97,13 +102,21 @@ router.post("/mikrotik/connect", async (req, res): Promise<void> => {
   const { host, port, username, password } = parsed.data;
   try {
     const result = await withClient(host, port, username, password, async (client) => {
-      const data = await client.menu("/system/resource").getOnly();
-      return data;
+      const sysRes = await client.menu("/system/resource").getOnly();
+      let identityName: string | null = null;
+      try {
+        const ident = await client.menu("/system/identity").getOnly();
+        identityName = str((ident as Record<string, unknown>)["name"]) || null;
+      } catch {
+        // identity unavailable — non-fatal
+      }
+      return { sys: sysRes, identityName };
     });
-    const d = result as Record<string, unknown>;
+    const d = result.sys as Record<string, unknown>;
     res.json({
       success: true,
       message: "Connected successfully",
+      identity: result.identityName,
       routerOs: str(d["version"]),
       routerBoard: str(d["boardName"]),
     });
@@ -415,7 +428,7 @@ async function executeRosCommand(
   }
 }
 
-router.post("/mikrotik/command", async (req, res): Promise<void> => {
+router.post("/mikrotik/command", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = RunCommandBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -726,7 +739,7 @@ router.post("/mikrotik/export", async (req, res): Promise<void> => {
 // ─────────────────────────── WRITE ROUTES ───────────────────────────
 
 // ---- Interfaces ----
-router.post("/mikrotik/interface/toggle", async (req, res): Promise<void> => {
+router.post("/mikrotik/interface/toggle", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string(), disabled: z.boolean() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const { host, port, username, password, id, disabled } = parsed.data;
@@ -739,7 +752,7 @@ router.post("/mikrotik/interface/toggle", async (req, res): Promise<void> => {
   } catch (err) { res.status(400).json({ error: errMsg(err) }); }
 });
 
-router.post("/mikrotik/interface/comment", async (req, res): Promise<void> => {
+router.post("/mikrotik/interface/comment", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string(), comment: z.string() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const { host, port, username, password, id, comment } = parsed.data;
@@ -752,7 +765,7 @@ router.post("/mikrotik/interface/comment", async (req, res): Promise<void> => {
 });
 
 // ---- IP Addresses ----
-router.post("/mikrotik/ip/address/add", async (req, res): Promise<void> => {
+router.post("/mikrotik/ip/address/add", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({
     address: z.string(),
     interface: z.string(),
@@ -772,7 +785,7 @@ router.post("/mikrotik/ip/address/add", async (req, res): Promise<void> => {
   } catch (err) { res.status(400).json({ error: errMsg(err) }); }
 });
 
-router.post("/mikrotik/ip/address/remove", async (req, res): Promise<void> => {
+router.post("/mikrotik/ip/address/remove", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const { host, port, username, password, id } = parsed.data;
@@ -784,7 +797,7 @@ router.post("/mikrotik/ip/address/remove", async (req, res): Promise<void> => {
   } catch (err) { res.status(400).json({ error: errMsg(err) }); }
 });
 
-router.post("/mikrotik/ip/address/toggle", async (req, res): Promise<void> => {
+router.post("/mikrotik/ip/address/toggle", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string(), disabled: z.boolean() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const { host, port, username, password, id, disabled } = parsed.data;
@@ -798,7 +811,7 @@ router.post("/mikrotik/ip/address/toggle", async (req, res): Promise<void> => {
 });
 
 // ---- Firewall Filter Rules ----
-router.post("/mikrotik/firewall/filter/add", async (req, res): Promise<void> => {
+router.post("/mikrotik/firewall/filter/add", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({
     chain: z.string(),
     action: z.string(),
@@ -826,7 +839,7 @@ router.post("/mikrotik/firewall/filter/add", async (req, res): Promise<void> => 
   } catch (err) { res.status(400).json({ error: errMsg(err) }); }
 });
 
-router.post("/mikrotik/firewall/filter/remove", async (req, res): Promise<void> => {
+router.post("/mikrotik/firewall/filter/remove", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const { host, port, username, password, id } = parsed.data;
@@ -838,7 +851,7 @@ router.post("/mikrotik/firewall/filter/remove", async (req, res): Promise<void> 
   } catch (err) { res.status(400).json({ error: errMsg(err) }); }
 });
 
-router.post("/mikrotik/firewall/filter/toggle", async (req, res): Promise<void> => {
+router.post("/mikrotik/firewall/filter/toggle", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string(), disabled: z.boolean() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const { host, port, username, password, id, disabled } = parsed.data;
@@ -852,7 +865,7 @@ router.post("/mikrotik/firewall/filter/toggle", async (req, res): Promise<void> 
 });
 
 // ---- DHCP Leases ----
-router.post("/mikrotik/dhcp/lease/remove", async (req, res): Promise<void> => {
+router.post("/mikrotik/dhcp/lease/remove", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const { host, port, username, password, id } = parsed.data;
@@ -864,7 +877,7 @@ router.post("/mikrotik/dhcp/lease/remove", async (req, res): Promise<void> => {
   } catch (err) { res.status(400).json({ error: errMsg(err) }); }
 });
 
-router.post("/mikrotik/dhcp/lease/make-static", async (req, res): Promise<void> => {
+router.post("/mikrotik/dhcp/lease/make-static", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = WriteBase.extend({ id: z.string() }).safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const { host, port, username, password, id } = parsed.data;

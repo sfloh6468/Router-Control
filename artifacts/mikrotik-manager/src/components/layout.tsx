@@ -12,9 +12,11 @@ import {
   Download,
   Loader2,
   User as UserIcon,
+  Shield,
 } from "lucide-react";
 import { useClerk, useUser, Show } from "@clerk/react";
 import { useRouterContext } from "@/lib/router-context";
+import { useMe } from "@/hooks/use-admin";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
@@ -32,11 +34,13 @@ const navItems = [
 
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
-  const { isConnected, credentials, setCredentials } = useRouterContext();
+  const { isConnected, credentials, meta, setCredentials } = useRouterContext();
   const { user } = useUser();
   const { signOut } = useClerk();
   const [exporting, setExporting] = useState(false);
   const [chatOpen, setChatOpen] = useState(true);
+  const me = useMe();
+  const isSuper = me.data?.isSuper === true;
 
   const handleExport = async () => {
     if (!credentials) return;
@@ -57,7 +61,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
       const a = document.createElement("a");
       const date = new Date().toISOString().slice(0, 10);
       a.href = url;
-      a.download = `mikrotik-${credentials.host}-${date}.rsc`;
+      a.download = `mikrotik-${meta.identity ?? credentials.host}-${date}.rsc`;
       a.click();
       URL.revokeObjectURL(url);
       toast.success("Config downloaded successfully");
@@ -68,27 +72,35 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const userChip = (
+    <Show when="signed-in">
+      <div className="absolute top-4 right-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card border border-border shadow-sm text-xs">
+        {isSuper && (
+          <Link href="/admin" className="flex items-center gap-1 text-amber-700 hover:text-amber-900 font-medium" title="Manage users">
+            <Shield className="h-3.5 w-3.5" />
+            <span>Admin</span>
+          </Link>
+        )}
+        <UserIcon className="h-3.5 w-3.5 text-primary" />
+        <span className="text-muted-foreground truncate max-w-[160px]">
+          {user?.primaryEmailAddress?.emailAddress ?? user?.username ?? "Signed in"}
+        </span>
+        <button
+          onClick={() => signOut()}
+          className="text-muted-foreground hover:text-destructive transition-colors"
+          title="Sign out"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+        </button>
+      </div>
+    </Show>
+  );
+
   if (!isConnected) {
-    // Connection screen, but with chat sidebar still visible (so user can ask
-    // for help connecting) and a small top-right user/sign-out chip.
     return (
       <div className="flex h-screen bg-background text-foreground overflow-hidden relative">
         <main className="flex-1 flex flex-col min-w-0 relative">
-          <Show when="signed-in">
-            <div className="absolute top-4 right-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card/60 backdrop-blur-xl border border-border/50 text-xs">
-              <UserIcon className="h-3.5 w-3.5 text-primary" />
-              <span className="text-muted-foreground truncate max-w-[160px]">
-                {user?.primaryEmailAddress?.emailAddress ?? user?.username ?? "Signed in"}
-              </span>
-              <button
-                onClick={() => signOut()}
-                className="text-muted-foreground hover:text-destructive transition-colors"
-                title="Sign out"
-              >
-                <LogOut className="h-3.5 w-3.5" />
-              </button>
-            </div>
-          </Show>
+          {userChip}
           {children}
         </main>
         <ChatSidebar open={chatOpen} onOpenChange={setChatOpen} />
@@ -99,17 +111,20 @@ export function Layout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex h-screen bg-background text-foreground overflow-hidden relative">
       {/* Sidebar */}
-      <aside className="w-64 flex flex-col border-r border-border/50 bg-card/50 backdrop-blur-xl z-10 shadow-2xl relative shrink-0">
+      <aside className="w-64 flex flex-col border-r border-border bg-card z-10 shadow-sm relative shrink-0">
         <div className="p-6 flex items-center gap-3">
-          <div className="h-10 w-10 rounded-xl bg-primary/20 flex items-center justify-center border border-primary/30 relative">
+          <div className="h-10 w-10 rounded-xl bg-primary/15 flex items-center justify-center border border-primary/30 relative">
             <div className="absolute inset-0 rounded-xl glow-effect opacity-50" />
             <Activity className="h-5 w-5 text-primary" />
           </div>
           <div className="min-w-0">
             <h1 className="font-bold text-lg leading-tight tracking-tight">MikroTik</h1>
-            <p className="text-xs text-muted-foreground font-mono flex items-center gap-1.5 truncate">
+            <p
+              className="text-xs text-muted-foreground font-mono flex items-center gap-1.5 truncate"
+              title={meta.identity ? `${meta.identity} (${credentials?.host})` : credentials?.host}
+            >
               <span className="w-1.5 h-1.5 rounded-full bg-success animate-pulse shrink-0" />
-              {credentials?.host}
+              <span className="truncate">{meta.identity ?? credentials?.host}</span>
             </p>
           </div>
         </div>
@@ -124,8 +139,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 className={cn(
                   "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all relative group overflow-hidden",
                   isActive
-                    ? "text-primary-foreground bg-primary/10 border border-primary/20"
-                    : "text-muted-foreground hover:text-foreground hover:bg-white/5"
+                    ? "text-primary bg-primary/10 border border-primary/20"
+                    : "text-muted-foreground hover:text-foreground hover:bg-accent"
                 )}
               >
                 {isActive && (
@@ -140,17 +155,37 @@ export function Layout({ children }: { children: React.ReactNode }) {
               </Link>
             );
           })}
+          {isSuper && (
+            <Link
+              href="/admin"
+              className={cn(
+                "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all",
+                location === "/admin"
+                  ? "text-amber-700 bg-amber-50 border border-amber-200"
+                  : "text-muted-foreground hover:text-amber-700 hover:bg-amber-50",
+              )}
+            >
+              <Shield className="h-4 w-4" />
+              Users & Roles
+            </Link>
+          )}
         </nav>
 
-        <div className="p-3 border-t border-border/50 space-y-1">
-          {/* User chip */}
+        <div className="p-3 border-t border-border space-y-1">
           <div className="flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground">
             <div className="h-6 w-6 rounded-full bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0">
               <UserIcon className="h-3 w-3 text-primary" />
             </div>
-            <span className="truncate flex-1">
-              {user?.primaryEmailAddress?.emailAddress ?? user?.username ?? "Signed in"}
-            </span>
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-foreground/80">
+                {user?.primaryEmailAddress?.emailAddress ?? user?.username ?? "Signed in"}
+              </div>
+              {me.data && (
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
+                  {me.data.role.replace("_", " ")}
+                </div>
+              )}
+            </div>
           </div>
           <button
             onClick={handleExport}
