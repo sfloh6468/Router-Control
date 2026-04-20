@@ -66,6 +66,47 @@ export function ChatSidebar({
   const fileRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Resizable width (persisted)
+  const MIN_W = 320;
+  const MAX_W_FRACTION = 0.85; // up to 85% of viewport
+  const [width, setWidth] = useState<number>(() => {
+    if (typeof window === "undefined") return 420;
+    const saved = Number(localStorage.getItem("chatSidebarWidth"));
+    return Number.isFinite(saved) && saved >= MIN_W ? saved : 420;
+  });
+  const [dragging, setDragging] = useState(false);
+
+  useEffect(() => {
+    if (!dragging) return;
+    const onMove = (e: MouseEvent) => {
+      const next = Math.min(
+        Math.max(window.innerWidth - e.clientX, MIN_W),
+        Math.floor(window.innerWidth * MAX_W_FRACTION),
+      );
+      setWidth(next);
+    };
+    const onUp = () => {
+      setDragging(false);
+      try { localStorage.setItem("chatSidebarWidth", String(width)); } catch { /* ignore */ }
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+  }, [dragging, width]);
+
+  // Persist width whenever it stabilises
+  useEffect(() => {
+    if (dragging) return;
+    try { localStorage.setItem("chatSidebarWidth", String(width)); } catch { /* ignore */ }
+  }, [width, dragging]);
+
   // Auto-scroll on new content
   useEffect(() => {
     if (scrollRef.current) {
@@ -142,10 +183,30 @@ export function ChatSidebar({
       {/* Sidebar */}
       <aside
         className={cn(
-          "flex flex-col border-l border-border bg-card shadow-xl transition-all duration-300 ease-out overflow-hidden",
-          open ? "w-[420px]" : "w-0",
+          "relative flex flex-col border-l border-border bg-card shadow-xl overflow-hidden",
+          dragging ? "" : "transition-[width] duration-300 ease-out",
+          !open && "w-0",
         )}
+        style={open ? { width: `${width}px` } : undefined}
       >
+        {/* Drag handle on the left edge */}
+        {open && (
+          <div
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Resize assistant sidebar"
+            onMouseDown={(e) => { e.preventDefault(); setDragging(true); }}
+            onDoubleClick={() => setWidth(420)}
+            title="Drag to resize · double-click to reset"
+            className={cn(
+              "absolute left-0 top-0 h-full w-1.5 cursor-col-resize z-40 group",
+              "hover:bg-primary/30",
+              dragging && "bg-primary/40",
+            )}
+          >
+            <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-12 w-1 rounded-full bg-border group-hover:bg-primary/60 transition-colors" />
+          </div>
+        )}
         <div className="flex items-center justify-between p-4 border-b border-border">
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="h-8 w-8 rounded-lg bg-primary/15 border border-primary/30 flex items-center justify-center shrink-0">
