@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect, useRef, ReactNode } from "react";
 import type { RouterCredentials } from "@workspace/api-client-react";
 
 const STORAGE_KEY = "mikrotik_credentials";
@@ -67,6 +67,44 @@ export function RouterProvider({ children }: { children: ReactNode }) {
   };
 
   const disconnect = () => setCredentials(null);
+
+  // Auto-refresh router identity on mount if we have credentials but identity is missing
+  // (e.g. localStorage was populated before identity-fetch was reliable, or fetch failed earlier).
+  const refreshTriedRef = useRef(false);
+  useEffect(() => {
+    if (refreshTriedRef.current) return;
+    if (!credentials) return;
+    if (meta.identity) return;
+    refreshTriedRef.current = true;
+    const apiBase = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
+    (async () => {
+      try {
+        const r = await fetch(`${apiBase}/api/mikrotik/connect`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(credentials),
+        });
+        if (!r.ok) return;
+        const j = (await r.json()) as {
+          success?: boolean;
+          identity?: string | null;
+          routerOs?: string | null;
+          routerBoard?: string | null;
+        };
+        if (!j.success) return;
+        const updated: RouterMeta = {
+          ...meta,
+          identity: j.identity ?? null,
+          routerOs: j.routerOs ?? meta.routerOs ?? null,
+          routerBoard: j.routerBoard ?? meta.routerBoard ?? null,
+        };
+        setMetaState(updated);
+        persist(credentials, updated);
+      } catch {
+        // non-fatal — header will keep showing host
+      }
+    })();
+  }, [credentials, meta]);
 
   return (
     <RouterContext.Provider
