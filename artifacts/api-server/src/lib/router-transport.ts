@@ -437,6 +437,57 @@ async function openSsh(creds: RouterCreds, port: number): Promise<SshSession> {
   });
 }
 
+/** Parse one "print terse" line:
+ *    "0 XR name=ether1 type=ether mtu=1500 comment=hello world"
+ *  Format: <index> [flags...] key=val key=val ...
+ *  Values may contain spaces, so we split by detecting the next " key=" boundary.
+ *  Returns null on header / non-record lines. */
+function parseTerseLine(line: string): Record<string, unknown> | null {
+  // Trim trailing CR/whitespace but preserve internal whitespace.
+  const trimmed = line.replace(/\s+$/, "");
+  if (!trimmed) return null;
+  // Must start with optional spaces then a numeric index.
+  const m = trimmed.match(/^\s*(\d+)\s+(.*)$/);
+  if (!m) return null;
+  const indexNum = m[1];
+  let rest = m[2];
+  // Find the start of the first key=value pair. Everything before it is the flag block.
+  const firstKey = rest.search(/[A-Za-z_][A-Za-z0-9_-]*=/);
+  if (firstKey < 0) return null;
+  const flagsRaw = rest.slice(0, firstKey).trim();
+  rest = rest.slice(firstKey);
+  // Walk forward and find every " key=" boundary to split values.
+  const keys: { key: string; valStart: number; tokenStart: number }[] = [];
+  const keyRe = /(?:^|\s)([A-Za-z_][A-Za-z0-9_-]*)=/g;
+  let km: RegExpExecArray | null;
+  while ((km = keyRe.exec(rest)) !== null) {
+    const tokenStart = km.index + (km[0].startsWith(" ") ? 1 : 0);
+    keys.push({ key: km[1], tokenStart, valStart: km.index + km[0].length });
+  }
+  const out: Record<string, unknown> = { ".id": indexNum };
+  if (flagsRaw) {
+    if (flagsRaw.includes("X")) out["disabled"] = "true";
+    if (flagsRaw.includes("D")) out["dynamic"] = "true";
+    if (flagsRaw.includes("R")) out["running"] = "true";
+    if (flagsRaw.includes("I")) out["invalid"] = "true";
+  }
+  for (let i = 0; i < keys.length; i++) {
+    const valEnd = i + 1 < keys.length ? keys[i + 1].tokenStart : rest.length;
+    let val = rest.slice(keys[i].valStart, valEnd).replace(/\s+$/, "");
+    // Strip surrounding double quotes if RouterOS quoted the value.
+    if (val.length >= 2 && val.startsWith('"') && val.endsWith('"')) {
+      val = val
+        .slice(1, -1)
+        .replace(/\\"/g, '"')
+        .replace(/\\\\/g, "\\")
+        .replace(/\\n/g, "\n")
+        .replace(/\\r/g, "\r");
+    }
+    out[keys[i].key] = val;
+  }
+  return normalizeRecord(out);
+}
+
 /** Parse one "as-value" line: ".id=*1;name=ether1;..." → record.
  *  Respects double-quoted values and `\"` / `\\` escapes inside them. */
 function parseAsValueLine(line: string): Record<string, unknown> | null {
@@ -527,7 +578,11 @@ async function buildSshAdapter(creds: RouterCreds, transport: Transport): Promis
       const cli = cliPath(path);
       return {
         async get(filter) {
-          let cmd = `${cli} print as-value without-paging`;
+          // RouterOS non-interactive SSH refuses `print as-value` for many menus
+          // (returns empty), so we use `print terse without-paging` which is
+          // universally supported and emits one record per line as
+          // `<idx> [flags] key=val key=val ...`.
+          let cmd = `${cli} print terse without-paging`;
           if (filter && Object.keys(filter).length > 0) {
             const wherePairs: string[] = [];
             for (const [k, v] of Object.entries(filter)) {
@@ -537,12 +592,12 @@ async function buildSshAdapter(creds: RouterCreds, transport: Transport): Promis
               }
               wherePairs.push(`${key}=${quoteRosValue(String(v))}`);
             }
-            cmd = `${cli} print as-value without-paging where ${wherePairs.join(" ")}`;
+            cmd = `${cli} print terse without-paging where ${wherePairs.join(" ")}`;
           }
           const out = await session.exec(cmd);
           const records: Record<string, unknown>[] = [];
           for (const line of out.split(/\r?\n/)) {
-            const rec = parseAsValueLine(line);
+            const rec = parseTerseLine(line);
             if (rec) records.push(rec);
           }
           return records;
