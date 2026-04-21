@@ -553,7 +553,20 @@ async function buildSshAdapter(creds: RouterCreds, transport: Transport): Promis
             const rec = parseAsValueLine(line);
             if (rec) return rec;
           }
-          return {};
+          // Fallback: some single-record menus (e.g. /system/identity, /system/note,
+          // /ip/cloud) emit nothing for `print as-value`. Re-run plain `print` and
+          // parse the standard "  key: value" two-space-indented lines.
+          const plain = await session.exec(`${cli} print without-paging`);
+          const rec: Record<string, unknown> = {};
+          for (const rawLine of plain.split(/\r?\n/)) {
+            const line = rawLine.replace(/\s+$/, "");
+            // Match lines like "  name: 188Suites-RB5009UG+S+" or "  uptime: 3w2d".
+            const m = line.match(/^\s*([A-Za-z][A-Za-z0-9-]*)\s*:\s*(.*)$/);
+            if (!m) continue;
+            rec[m[1]] = m[2];
+          }
+          if (Object.keys(rec).length === 0) return {};
+          return normalizeRecord(rec);
         },
         async add(props) {
           const args = buildKvArgs(props);
