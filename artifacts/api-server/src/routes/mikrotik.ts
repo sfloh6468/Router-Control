@@ -470,7 +470,8 @@ async function safeGet(
   try {
     const items = await client.menu(path).get();
     return items;
-  } catch {
+  } catch (e) {
+    console.warn(`[export] safeGet ${path} failed:`, errMsg(e));
     return [];
   }
 }
@@ -481,9 +482,12 @@ async function safeGetOne(
   path: string
 ): Promise<Record<string, unknown> | null> {
   try {
-    const items = await client.menu(path).get();
-    return items[0] ?? null;
-  } catch {
+    // Single-record menus (e.g. /system/identity, /ip/dns) must use getOnly,
+    // since `print terse` is rejected on these menus over RouterOS SSH.
+    const rec = await client.menu(path).getOnly();
+    return rec && Object.keys(rec).length > 0 ? rec : null;
+  } catch (e) {
+    console.warn(`[export] safeGetOne ${path} failed:`, errMsg(e));
     return null;
   }
 }
