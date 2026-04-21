@@ -60,7 +60,54 @@ export function ChatSidebar({
   onOpenChange: (v: boolean) => void;
 }) {
   const { messages, isStreaming, send, reset, cancel } = useChat();
-  const { credentials, meta } = useRouterContext();
+  const { credentials, meta, setConnection } = useRouterContext();
+
+  // Sidebar-local identity fetch — independent of router-context's startup logic,
+  // so the header always shows the real router identity once available.
+  const [localIdentity, setLocalIdentity] = useState<string | null>(meta.identity ?? null);
+  const [identityLoading, setIdentityLoading] = useState(false);
+  const fetchedHostRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    setLocalIdentity(meta.identity ?? null);
+  }, [meta.identity]);
+
+  useEffect(() => {
+    if (!credentials) return;
+    // Already have a name from context or local fetch
+    if (meta.identity || localIdentity) return;
+    // Avoid re-fetching for the same host within this mount
+    if (fetchedHostRef.current === credentials.host) return;
+    fetchedHostRef.current = credentials.host;
+    setIdentityLoading(true);
+    const apiBase = (import.meta.env.BASE_URL ?? "/").replace(/\/$/, "");
+    (async () => {
+      try {
+        const r = await fetch(`${apiBase}/api/mikrotik/connect`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(credentials),
+        });
+        const j = await r.json().catch(() => ({}));
+        if (r.ok && j?.success && j?.identity) {
+          setLocalIdentity(j.identity);
+          // Sync back into router context so other parts of the app see it
+          setConnection(credentials, {
+            ...meta,
+            identity: j.identity,
+            routerOs: j.routerOs ?? meta.routerOs ?? null,
+            routerBoard: j.routerBoard ?? meta.routerBoard ?? null,
+          });
+        }
+      } catch {
+        // non-fatal
+      } finally {
+        setIdentityLoading(false);
+      }
+    })();
+  }, [credentials, meta, localIdentity, setConnection]);
+
+  const displayName = localIdentity ?? meta.identity ?? credentials?.host ?? null;
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -251,10 +298,20 @@ export function ChatSidebar({
             </div>
             <div className="min-w-0">
               <h2 className="font-semibold text-sm leading-tight truncate">AI Assistant</h2>
-              <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider truncate" title={credentials ? `${meta.identity ?? credentials.host}` : "no router"}>
-                {credentials
-                  ? `live · ${meta.identity ?? credentials.host}`
-                  : "no router connected"}
+              <p
+                className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider truncate flex items-center gap-1"
+                title={credentials ? `${displayName} (${credentials.host})` : "no router"}
+              >
+                {credentials ? (
+                  <>
+                    <span className="text-emerald-600">live</span>
+                    <span>·</span>
+                    <span className="truncate">{displayName}</span>
+                    {identityLoading && <Loader2 className="h-2.5 w-2.5 animate-spin shrink-0" />}
+                  </>
+                ) : (
+                  <span>no router connected</span>
+                )}
               </p>
             </div>
           </div>
