@@ -525,6 +525,22 @@ router.post("/mikrotik/export", async (req, res): Promise<void> => {
   const { host, port, username, password, transport } = parsed.data;
   try {
     const rsc = await withClient({host, port, username, password, transport}, async (client) => {
+      // Preferred path: ask RouterOS itself to export the running config. This is
+      // the same script `/export compact` produces in WinBox/SSH, including all
+      // sections (PPP, queues, ZeroTier, services, etc.) with proper quoting and
+      // comments preserved. Currently only available over SSH.
+      try {
+        const out = await client.exec("/export compact show-sensitive");
+        if (out && out.trim().length > 0) {
+          // RouterOS sometimes includes an interactive echo / prompt — strip
+          // anything before the first "# " header line.
+          const idx = out.indexOf("# ");
+          return idx > 0 ? out.slice(idx) : out;
+        }
+      } catch {
+        // Non-SSH transport — fall through to the section-by-section reconstruction.
+      }
+
       const [
         identity,
         bridges,
