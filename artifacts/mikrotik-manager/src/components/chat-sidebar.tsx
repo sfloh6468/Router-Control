@@ -166,9 +166,26 @@ export function ChatSidebar({
     const next: ChatAttachment[] = [];
     for (const f of Array.from(files)) {
       try {
+        const isPdf =
+          f.type === "application/pdf" ||
+          /\.pdf$/i.test(f.name);
         if (f.type.startsWith("image/")) {
           const data = await readFileAsBase64(f);
           next.push({ kind: "image", name: f.name, mediaType: f.type, data });
+        } else if (isPdf) {
+          // Anthropic accepts PDFs up to 32 MB / 100 pages as `document` blocks.
+          if (f.size > 32 * 1024 * 1024) {
+            // eslint-disable-next-line no-alert
+            alert(`PDF "${f.name}" is larger than 32 MB and was skipped.`);
+            continue;
+          }
+          const data = await readFileAsBase64(f);
+          next.push({
+            kind: "pdf",
+            name: f.name,
+            mediaType: "application/pdf",
+            data,
+          });
         } else {
           // Treat as text (config exports, logs, .rsc, .txt, .json, etc.)
           const data = await readFileAsText(f);
@@ -385,7 +402,7 @@ export function ChatSidebar({
             <div className="pointer-events-none absolute inset-1 z-10 rounded-lg border-2 border-dashed border-primary bg-primary/10 backdrop-blur-sm flex flex-col items-center justify-center text-primary">
               <Paperclip className="h-6 w-6 mb-1" />
               <div className="text-sm font-semibold">Drop to attach</div>
-              <div className="text-[11px] text-muted-foreground">images, configs, logs, .rsc, .txt, .json</div>
+              <div className="text-[11px] text-muted-foreground">images, PDFs, configs, logs, .rsc, .txt, .json</div>
             </div>
           )}
           {attachments.length > 0 && (
@@ -397,6 +414,8 @@ export function ChatSidebar({
                 >
                   {a.kind === "image" ? (
                     <ImageIcon className="h-3 w-3 text-primary" />
+                  ) : a.kind === "pdf" ? (
+                    <FileText className="h-3 w-3 text-rose-600" />
                   ) : (
                     <FileText className="h-3 w-3 text-primary" />
                   )}
@@ -431,7 +450,7 @@ export function ChatSidebar({
                 ref={fileRef}
                 type="file"
                 multiple
-                accept="image/*,text/*,.rsc,.log,.conf,.txt,.json"
+                accept="image/*,application/pdf,.pdf,text/*,.rsc,.log,.conf,.txt,.json"
                 className="hidden"
                 onChange={(e) => handleFiles(e.target.files)}
               />

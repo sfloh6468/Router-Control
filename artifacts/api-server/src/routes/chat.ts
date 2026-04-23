@@ -122,7 +122,8 @@ async function runRouterCommand(
 
 type ContentBlock =
   | { type: "text"; text: string }
-  | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } }
+  | { type: "document"; source: { type: "base64"; media_type: string; data: string }; title?: string };
 
 type ChatMessage = {
   role: "user" | "assistant";

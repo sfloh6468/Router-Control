@@ -3,10 +3,10 @@ import type { RouterCredentials } from "@workspace/api-client-react";
 import { useRouterContext } from "@/lib/router-context";
 
 export type ChatAttachment = {
-  kind: "image" | "text";
+  kind: "image" | "text" | "pdf";
   name: string;
   mediaType: string;
-  // base64 for image, raw text for text. Optional because reloaded history
+  // base64 for image/pdf, raw text for text. Optional because reloaded history
   // from the server only carries metadata, not the original payload.
   data?: string;
 };
@@ -146,12 +146,18 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         const blocks: any[] = [];
         for (const a of m.attachments ?? []) {
           // Persisted history only stores attachment metadata, not the bytes.
-          // Skip image blocks where we don't have the actual base64 data so we
-          // don't send malformed image content to Claude on a continued turn.
+          // Skip image/pdf blocks where we don't have the actual base64 data so
+          // we don't send malformed content to Claude on a continued turn.
           if (a.kind === "image" && a.data) {
             blocks.push({
               type: "image",
               source: { type: "base64", media_type: a.mediaType, data: a.data },
+            });
+          } else if (a.kind === "pdf" && a.data) {
+            blocks.push({
+              type: "document",
+              source: { type: "base64", media_type: "application/pdf", data: a.data },
+              title: a.name,
             });
           }
         }
