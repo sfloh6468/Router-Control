@@ -14,7 +14,7 @@ import {
   User as UserIcon,
   Shield,
 } from "lucide-react";
-import { useClerk, useUser, Show } from "@clerk/react";
+import { useAuth } from "@/lib/auth-context";
 import { useRouterContext } from "@/lib/router-context";
 import { useMe } from "@/hooks/use-admin";
 import { cn } from "@/lib/utils";
@@ -35,8 +35,7 @@ const navItems = [
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { isConnected, credentials, meta, setCredentials } = useRouterContext();
-  const { user } = useUser();
-  const { signOut } = useClerk();
+  const { user, logout } = useAuth();
   const [exporting, setExporting] = useState(false);
   const [chatOpen, setChatOpen] = useState(true);
   const me = useMe();
@@ -72,29 +71,27 @@ export function Layout({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const userChip = (
-    <Show when="signed-in">
-      <div className="absolute top-4 right-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card border border-border shadow-sm text-xs">
-        {isSuper && (
-          <Link href="/admin" className="flex items-center gap-1 text-amber-700 hover:text-amber-900 font-medium" title="Manage users">
-            <Shield className="h-3.5 w-3.5" />
-            <span>Admin</span>
-          </Link>
-        )}
-        <UserIcon className="h-3.5 w-3.5 text-primary" />
-        <span className="text-muted-foreground truncate max-w-[160px]">
-          {user?.primaryEmailAddress?.emailAddress ?? user?.username ?? "Signed in"}
-        </span>
-        <button
-          onClick={() => signOut()}
-          className="text-muted-foreground hover:text-destructive transition-colors"
-          title="Sign out"
-        >
-          <LogOut className="h-3.5 w-3.5" />
-        </button>
-      </div>
-    </Show>
-  );
+  const userChip = user ? (
+    <div className="absolute top-4 right-4 z-20 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-card border border-border shadow-sm text-xs">
+      {isSuper && (
+        <Link href="/admin" className="flex items-center gap-1 text-amber-700 hover:text-amber-900 font-medium" title="Manage users">
+          <Shield className="h-3.5 w-3.5" />
+          <span>Admin</span>
+        </Link>
+      )}
+      <UserIcon className="h-3.5 w-3.5 text-primary" />
+      <span className="text-muted-foreground truncate max-w-[160px]">
+        {user.username}
+      </span>
+      <button
+        onClick={() => logout()}
+        className="text-muted-foreground hover:text-destructive transition-colors"
+        title="Sign out"
+      >
+        <LogOut className="h-3.5 w-3.5" />
+      </button>
+    </div>
+  ) : null;
 
   if (!isConnected) {
     return (
@@ -178,7 +175,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </div>
             <div className="min-w-0 flex-1">
               <div className="truncate text-foreground/80">
-                {user?.primaryEmailAddress?.emailAddress ?? user?.username ?? "Signed in"}
+                {user?.username ?? "Signed in"}
               </div>
               {me.data && (
                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -203,7 +200,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             Disconnect Router
           </button>
           <button
-            onClick={() => signOut()}
+            onClick={() => logout()}
             className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-sm font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
           >
             <LogOut className="h-4 w-4" />

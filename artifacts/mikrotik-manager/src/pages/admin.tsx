@@ -1,23 +1,51 @@
-import { useState } from "react";
-import { Shield, ShieldAlert, ShieldCheck, Eye, Pencil, UserX, UserCheck, Loader2, AlertTriangle } from "lucide-react";
-import { useQueryClient } from "@tanstack/react-query";
+import { useState, type FormEvent } from "react";
+import {
+  Shield,
+  ShieldAlert,
+  ShieldCheck,
+  Eye,
+  Pencil,
+  UserX,
+  UserCheck,
+  Loader2,
+  AlertTriangle,
+  UserPlus,
+  Trash2,
+  KeyRound,
+} from "lucide-react";
 import { toast } from "sonner";
-import { useMe, useUsersList, updateUser, type ManagedUser } from "@/hooks/use-admin";
+import {
+  useMe,
+  useUsers,
+  useCreateUser,
+  useUpdateUser,
+  useDeleteUser,
+  type AdminUser,
+} from "@/hooks/use-admin";
+import type { AuthRole } from "@/lib/auth-context";
 
-const ROLE_OPTIONS: Array<{ value: ManagedUser["role"]; label: string; icon: React.ComponentType<any>; help: string }> = [
+const ROLE_OPTIONS: Array<{
+  value: AuthRole;
+  label: string;
+  icon: React.ComponentType<any>;
+  help: string;
+}> = [
   { value: "read_only", label: "Read-only", icon: Eye, help: "Can connect & read state. Cannot change router config." },
   { value: "read_write", label: "Read / write", icon: Pencil, help: "Can connect, read, and run mutating commands." },
   { value: "superuser", label: "Superuser", icon: ShieldAlert, help: "Full admin including managing user accounts." },
 ];
 
-function RoleBadge({ role }: { role: ManagedUser["role"] }) {
+const CREATABLE_ROLES: AuthRole[] = ["read_only", "read_write"];
+
+function RoleBadge({ role }: { role: AuthRole }) {
   const opt = ROLE_OPTIONS.find((o) => o.value === role)!;
   const Icon = opt.icon;
-  const cls = role === "superuser"
-    ? "bg-amber-100 text-amber-800 border-amber-200"
-    : role === "read_write"
-    ? "bg-emerald-100 text-emerald-800 border-emerald-200"
-    : "bg-slate-100 text-slate-700 border-slate-200";
+  const cls =
+    role === "superuser"
+      ? "bg-amber-100 text-amber-800 border-amber-200"
+      : role === "read_write"
+      ? "bg-emerald-100 text-emerald-800 border-emerald-200"
+      : "bg-slate-100 text-slate-700 border-slate-200";
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium border ${cls}`}>
       <Icon className="h-3 w-3" />
@@ -26,21 +54,135 @@ function RoleBadge({ role }: { role: ManagedUser["role"] }) {
   );
 }
 
+function CreateUserForm() {
+  const create = useCreateUser();
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [role, setRole] = useState<AuthRole>("read_only");
+  const [fullName, setFullName] = useState("");
+
+  async function onSubmit(e: FormEvent) {
+    e.preventDefault();
+    try {
+      await create.mutateAsync({
+        username: username.trim(),
+        password,
+        role,
+        fullName: fullName.trim() || undefined,
+      });
+      toast.success(`Created ${username} (${role})`);
+      setUsername("");
+      setPassword("");
+      setFullName("");
+      setRole("read_only");
+    } catch (e: any) {
+      toast.error(e?.message || "Could not create user");
+    }
+  }
+
+  return (
+    <form
+      onSubmit={onSubmit}
+      className="rounded-xl border border-border bg-card p-4 space-y-3"
+    >
+      <div className="flex items-center gap-2 font-semibold text-sm">
+        <UserPlus className="h-4 w-4 text-primary" /> Create new member
+      </div>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Username</label>
+          <input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            required
+            placeholder="e.g. alice"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:border-primary"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Password</label>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            required
+            minLength={4}
+            placeholder="At least 4 characters"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:border-primary"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Full name (optional)</label>
+          <input
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="Alice Smith"
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:border-primary"
+          />
+        </div>
+        <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Role</label>
+          <select
+            value={role}
+            onChange={(e) => setRole(e.target.value as AuthRole)}
+            className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+          >
+            {CREATABLE_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {ROLE_OPTIONS.find((o) => o.value === r)!.label}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <button
+        type="submit"
+        disabled={create.isPending}
+        className="rounded-md bg-primary text-primary-foreground font-semibold px-4 py-2 text-sm hover:bg-primary/90 disabled:opacity-60 inline-flex items-center gap-2"
+      >
+        {create.isPending && <Loader2 className="h-4 w-4 animate-spin" />}
+        Create user
+      </button>
+    </form>
+  );
+}
+
+function ResetPasswordButton({ user }: { user: AdminUser }) {
+  const update = useUpdateUser();
+  return (
+    <button
+      title="Reset password"
+      onClick={async () => {
+        const pw = window.prompt(`Enter a new password for "${user.username}":`);
+        if (!pw) return;
+        try {
+          await update.mutateAsync({ id: user.id, body: { password: pw } });
+          toast.success(`Password reset for ${user.username}`);
+        } catch (e: any) {
+          toast.error(e?.message || "Reset failed");
+        }
+      }}
+      disabled={update.isPending}
+      className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-30"
+    >
+      <KeyRound className="h-4 w-4" />
+    </button>
+  );
+}
+
 export default function AdminPage() {
   const me = useMe();
-  const list = useUsersList(me.data?.isSuper === true);
-  const qc = useQueryClient();
+  const list = useUsers();
+  const update = useUpdateUser();
+  const del = useDeleteUser();
   const [savingId, setSavingId] = useState<string | null>(null);
 
-  const refresh = () => qc.invalidateQueries({ queryKey: ["admin", "users"] });
-
-  const onChangeRole = async (u: ManagedUser, role: ManagedUser["role"]) => {
+  const onChangeRole = async (u: AdminUser, role: AuthRole) => {
     if (role === u.role) return;
-    setSavingId(u.clerkUserId);
+    setSavingId(u.id);
     try {
-      await updateUser(u.clerkUserId, { role });
-      toast.success(`Updated ${u.email ?? u.clerkUserId} → ${role}`);
-      refresh();
+      await update.mutateAsync({ id: u.id, body: { role } });
+      toast.success(`Updated ${u.username} → ${role}`);
     } catch (e: any) {
       toast.error(e?.message ?? "Update failed");
     } finally {
@@ -48,21 +190,37 @@ export default function AdminPage() {
     }
   };
 
-  const onToggleDisabled = async (u: ManagedUser) => {
-    setSavingId(u.clerkUserId);
+  const onToggleDisabled = async (u: AdminUser) => {
+    setSavingId(u.id);
     try {
-      await updateUser(u.clerkUserId, { disabled: !u.disabled });
+      await update.mutateAsync({ id: u.id, body: { disabled: !u.disabled } });
       toast.success(u.disabled ? "User enabled" : "User disabled");
-      refresh();
     } catch (e: any) {
       toast.error(e?.message ?? "Update failed");
+    } finally {
+      setSavingId(null);
+    }
+  };
+
+  const onDelete = async (u: AdminUser) => {
+    if (!window.confirm(`Delete user "${u.username}"? This cannot be undone.`)) return;
+    setSavingId(u.id);
+    try {
+      await del.mutateAsync(u.id);
+      toast.success(`Deleted ${u.username}`);
+    } catch (e: any) {
+      toast.error(e?.message ?? "Delete failed");
     } finally {
       setSavingId(null);
     }
   };
 
   if (me.isLoading) {
-    return <div className="flex items-center justify-center h-64"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>;
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+      </div>
+    );
   }
   if (!me.data?.isSuper) {
     return (
@@ -72,7 +230,6 @@ export default function AdminPage() {
           <h2 className="font-semibold">Superuser only</h2>
           <p className="text-sm mt-1">
             Your role is <strong>{me.data?.role ?? "unknown"}</strong>. Only superusers can manage user accounts.
-            The first person to sign in to this workspace is auto-promoted to superuser.
           </p>
         </div>
       </div>
@@ -86,8 +243,7 @@ export default function AdminPage() {
           <Shield className="h-6 w-6 text-primary" /> User Management
         </h1>
         <p className="text-muted-foreground text-sm mt-1">
-          Grant access to your MikroTik Access workspace and choose what each person is allowed to do.
-          New users sign up via Google or email on the sign-in page; until you grant a role here they have <strong>read-only</strong> access.
+          Create accounts for your team and pick what each person can do. New users sign in with the username and password you set here.
         </p>
       </div>
 
@@ -102,6 +258,8 @@ export default function AdminPage() {
         ))}
       </div>
 
+      <CreateUserForm />
+
       <div className="rounded-xl border border-border overflow-hidden bg-card">
         <table className="w-full text-sm">
           <thead className="bg-muted/60 text-xs uppercase text-muted-foreground">
@@ -109,29 +267,43 @@ export default function AdminPage() {
               <th className="text-left p-3 font-medium">User</th>
               <th className="text-left p-3 font-medium">Role</th>
               <th className="text-left p-3 font-medium">Status</th>
-              <th className="text-left p-3 font-medium">First seen</th>
+              <th className="text-left p-3 font-medium">Created</th>
               <th className="text-right p-3 font-medium">Actions</th>
             </tr>
           </thead>
           <tbody>
             {list.isLoading && (
-              <tr><td colSpan={5} className="p-6 text-center text-muted-foreground"><Loader2 className="inline h-4 w-4 animate-spin mr-2" /> loading users…</td></tr>
+              <tr>
+                <td colSpan={5} className="p-6 text-center text-muted-foreground">
+                  <Loader2 className="inline h-4 w-4 animate-spin mr-2" /> loading users…
+                </td>
+              </tr>
             )}
             {list.error && (
-              <tr><td colSpan={5} className="p-6 text-center text-destructive">{(list.error as Error).message}</td></tr>
+              <tr>
+                <td colSpan={5} className="p-6 text-center text-destructive">
+                  {(list.error as Error).message}
+                </td>
+              </tr>
             )}
-            {list.data?.users.map((u) => {
-              const isMe = me.data?.userId === u.clerkUserId;
+            {list.data?.map((u) => {
+              const isMe = me.data?.userId === u.id;
               return (
-                <tr key={u.clerkUserId} className="border-t border-border hover:bg-accent/30">
+                <tr key={u.id} className="border-t border-border hover:bg-accent/30">
                   <td className="p-3">
                     <div className="font-medium">
-                      {u.fullName || u.email || u.clerkUserId.slice(0, 12)}
-                      {isMe && <span className="ml-2 text-[10px] uppercase tracking-wider text-primary">you</span>}
+                      {u.username}
+                      {isMe && (
+                        <span className="ml-2 text-[10px] uppercase tracking-wider text-primary">you</span>
+                      )}
                     </div>
-                    <div className="text-xs text-muted-foreground">{u.email ?? "—"}</div>
+                    <div className="text-xs text-muted-foreground">
+                      {u.fullName || u.email || "—"}
+                    </div>
                   </td>
-                  <td className="p-3"><RoleBadge role={u.role} /></td>
+                  <td className="p-3">
+                    <RoleBadge role={u.role} />
+                  </td>
                   <td className="p-3">
                     {u.disabled ? (
                       <span className="text-xs text-destructive font-medium">disabled</span>
@@ -146,29 +318,44 @@ export default function AdminPage() {
                     <div className="flex items-center gap-2 justify-end">
                       <select
                         value={u.role}
-                        disabled={savingId === u.clerkUserId}
-                        onChange={(e) => onChangeRole(u, e.target.value as ManagedUser["role"])}
+                        disabled={savingId === u.id}
+                        onChange={(e) => onChangeRole(u, e.target.value as AuthRole)}
                         className="text-xs bg-background border border-input rounded px-2 py-1"
                       >
                         {ROLE_OPTIONS.map((o) => (
-                          <option key={o.value} value={o.value}>{o.label}</option>
+                          <option key={o.value} value={o.value}>
+                            {o.label}
+                          </option>
                         ))}
                       </select>
+                      <ResetPasswordButton user={u} />
                       <button
                         onClick={() => onToggleDisabled(u)}
-                        disabled={savingId === u.clerkUserId || isMe}
+                        disabled={savingId === u.id || isMe}
                         title={u.disabled ? "Enable user" : "Disable user"}
                         className="p-1.5 rounded text-muted-foreground hover:text-foreground hover:bg-accent disabled:opacity-30"
                       >
                         {u.disabled ? <UserCheck className="h-4 w-4" /> : <UserX className="h-4 w-4" />}
+                      </button>
+                      <button
+                        onClick={() => onDelete(u)}
+                        disabled={savingId === u.id || isMe}
+                        title="Delete user"
+                        className="p-1.5 rounded text-muted-foreground hover:text-destructive hover:bg-destructive/10 disabled:opacity-30"
+                      >
+                        <Trash2 className="h-4 w-4" />
                       </button>
                     </div>
                   </td>
                 </tr>
               );
             })}
-            {list.data && list.data.users.length === 0 && (
-              <tr><td colSpan={5} className="p-6 text-center text-muted-foreground">No users yet.</td></tr>
+            {list.data && list.data.length === 0 && (
+              <tr>
+                <td colSpan={5} className="p-6 text-center text-muted-foreground">
+                  No users yet.
+                </td>
+              </tr>
             )}
           </tbody>
         </table>
@@ -177,9 +364,7 @@ export default function AdminPage() {
       <div className="text-xs text-muted-foreground flex items-start gap-2 p-3 rounded-lg bg-blue-50 border border-blue-200 text-blue-900">
         <ShieldCheck className="h-4 w-4 shrink-0 mt-0.5" />
         <div>
-          <strong>How sign-up works:</strong> share the app URL with anyone you want to grant access. They sign in
-          using Google or email (configured in the workspace Auth pane). They land here as <em>read-only</em>; come back
-          to this page to promote them to <em>read/write</em> or <em>superuser</em>.
+          <strong>Tip:</strong> use the key icon to reset a member's password if they forget it. Use the user-x icon to suspend an account without deleting it.
         </div>
       </div>
     </div>
