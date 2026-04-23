@@ -190,6 +190,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
           body: JSON.stringify({
             messages: wireMessages,
             credentials,
+            vendor: meta.vendor,
             conversationId,
             routerProfileId: profileId,
             routerIdentity: meta.identity ?? null,
@@ -295,7 +296,7 @@ export function ChatProvider({ children }: { children: ReactNode }) {
         abortRef.current = null;
       }
     },
-    [messages, conversationId, profileId, meta.identity],
+    [messages, conversationId, profileId, meta.identity, meta.vendor],
   );
 
   return (

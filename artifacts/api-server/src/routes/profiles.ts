@@ -10,14 +10,16 @@ const router: IRouter = Router();
 // metadata if it changed.
 router.post("/profiles/upsert", requireUser, async (req: Request, res: Response): Promise<void> => {
   const userId = req.userId!;
-  const { host, port, username, identity, routerOs, routerBoard } = req.body as {
+  const { host, port, username, vendor, identity, routerOs, routerBoard } = req.body as {
     host?: string;
     port?: number;
     username?: string;
+    vendor?: string;
     identity?: string | null;
     routerOs?: string | null;
     routerBoard?: string | null;
   };
+  const vendorValue = vendor === "huawei-olt" ? "huawei-olt" : "mikrotik";
 
   if (!host || !username) {
     res.status(400).json({ error: "host and username required" });
@@ -37,6 +39,7 @@ router.post("/profiles/upsert", requireUser, async (req: Request, res: Response)
       .set({
         port: port ?? existing[0].port,
         username,
+        vendor: vendorValue,
         identity: identity ?? existing[0].identity,
         routerOs: routerOs ?? existing[0].routerOs,
         routerBoard: routerBoard ?? existing[0].routerBoard,
@@ -54,6 +57,7 @@ router.post("/profiles/upsert", requireUser, async (req: Request, res: Response)
         host,
         port,
         username,
+        vendor: vendorValue,
         identity: identity ?? null,
         routerOs: routerOs ?? null,
         routerBoard: routerBoard ?? null,

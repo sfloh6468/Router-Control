@@ -4,6 +4,7 @@ import { db, conversationsTable, messagesTable, type MessageAttachment, type Mes
 import { eq, and } from "drizzle-orm";
 import { requireUser } from "../middlewares/requireAuth";
 import { connectRouter, type RouterCreds } from "../lib/router-transport";
+import { withOlt, type OltCreds } from "../lib/huawei-olt";
 
 const router: IRouter = Router();
 
@@ -130,9 +131,12 @@ type ChatMessage = {
   content: string | ContentBlock[];
 };
 
+type Vendor = "mikrotik" | "huawei-olt";
+
 type ChatBody = {
   messages: ChatMessage[];
   credentials?: Credentials;
+  vendor?: Vendor;
   conversationId?: number;
   routerProfileId?: number;
   // Lightweight metadata about the latest user turn (for persistence — DB
@@ -141,6 +145,38 @@ type ChatBody = {
   latestUserText?: string;
   routerIdentity?: string | null;
 };
+
+async function runOltCommand(
+  c: OltCreds,
+  command: string,
+): Promise<{ ok: true; output: unknown } | { ok: false; error: string }> {
+  try {
+    const out = await withOlt(c, async (s) => s.exec(command));
+    return { ok: true, output: out || "(no output)" };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+const OLT_READ_VERBS = new Set([
+  "display",
+  "ping",
+  "tracert",
+  "traceroute",
+  "show",
+  "debug",
+]);
+function isOltMutating(command: string): boolean {
+  const first = command.trim().split(/\s+/)[0]?.toLowerCase() ?? "";
+  if (!first) return false;
+  if (OLT_READ_VERBS.has(first)) return false;
+  // "quit" / "enable" / "config" are mode shifts, not mutations
+  if (["quit", "enable", "config", "exit", "scroll", "save"].includes(first)) {
+    // `save` writes config — count as mutating
+    return first === "save";
+  }
+  return true;
+}
 
 const SYSTEM_PROMPT = `You are an expert MikroTik / RouterOS network engineer and BGP operator embedded inside the "MikroTik Access" web app. Your job is to help the user diagnose, configure, and troubleshoot their MikroTik router live.
 
@@ -207,7 +243,69 @@ Use forward slashes in menu paths (\`/ip/address\`, not \`/ip address\`). Always
 - When you propose a config change, format it as: PROPOSED COMMAND, REASON, EXPECTED RESULT, ROLLBACK.
 - Never expose the user's credentials in your responses.`;
 
-const TOOLS: Anthropic.Tool[] = [
+const OLT_SYSTEM_PROMPT = `You are an expert Huawei SmartAX EA5800-family OLT engineer (specifically EA5801E) embedded inside the "Network Device Manager" web app. Your job is to help the user diagnose, configure, and troubleshoot their Huawei OLT live over SSH.
+
+## SCOPE — strict
+You answer ONLY questions that are within the domain of:
+- Huawei SmartAX OLTs (EA5800 family — EA5801E, MA5800-X2/X7/X15/X17): CLI, configuration, provisioning, alarms.
+- GPON / XG-PON / 10G PON access networks: ONT/ONU lifecycle, line / DBA / service / traffic / multicast profiles, GEM ports, T-CONTs, service-ports, VLANs (transparent / translation / stacked QinQ), RSTP, IGMP, multicast.
+- Networking concepts directly relevant to operating a PON OLT: VLANs, L2 forwarding, DHCP option 82, PPPoE+ relay, QoS / queues, IPoE, bridging / aggregation uplinks.
+- This Network Device Manager web app itself (how to use the connection screen, terminal, role permissions, ONT and Service Ports pages, etc.).
+
+If the user asks ANYTHING outside this scope — travel, food, weather, sports, general trivia, math homework, MikroTik / Cisco / Juniper / Nokia specifics, life advice — politely refuse in ONE short sentence and offer to keep helping with their OLT.
+
+## How you operate
+- You are effectively logged into the user's OLT over SSH and have already entered privileged \`enable\` mode and disabled paging. Each call to \`run_device_command\` opens a fresh shell session, runs the command, and returns the result. You can issue any EA5801E CLI command — display, configuration, save, etc.
+- Mode hierarchy of the EA5801E SmartAX CLI:
+  - User view  →  prompt \`<sysname>>\`           — limited; type \`enable\` to escalate.
+  - Privileged view  →  prompt \`<sysname>#\`     — diagnostics; type \`config\` to enter config.
+  - Config view  →  prompt \`<sysname>(config)#\` — global config; from here \`interface gpon 0/0\` etc enters interface views.
+  - Interface views  →  e.g. \`(config-if-gpon-0/0)#\` — port-specific commands.
+  - Use \`quit\` to leave a view, \`return\` to jump back to user view.
+- Because each \`run_device_command\` runs in a new session, you do NOT need to manually \`enable\` / \`scroll\` / \`config\` between calls — the wrapper handles \`enable\` and \`scroll\`. To run a command that requires config view, prefix the line with \`config; <your config command>\` or send the multi-step sequence in one call separated by \`;\`. (Multiple commands in one call are fine — each is replayed in order on the same shell.)
+- Provisioning model — common workflow:
+  1. Profiles (line / DBA / service / traffic-table / multicast) are created in config view.
+  2. \`ont add 0/0/<port> <id> sn-auth <SN> ...\` to authorize an ONT.
+  3. \`ont port native-vlan 0/0/<port> <id> eth <n> vlan <V>\` to set ONT eth port VLAN.
+  4. \`service-port vlan <V> gpon 0/0/<port> ont <id> gemport <g> multi-service user-vlan <U> inbound traffic-table index <T> outbound traffic-table index <T>\` to bind a service-port.
+  5. \`save\` to persist NV config — ALWAYS prompt the user for explicit approval before running \`save\`.
+- ALWAYS run diagnostic \`display\` commands first to verify state before proposing changes. Common starters:
+  - \`display version\`, \`display board 0\`, \`display sysuptime\`, \`display sysname\`
+  - \`display ont info 0 0 <port> all\`, \`display ont optical-info 0 0 <port> <id>\`, \`display ont info by-sn <SN>\`
+  - \`display service-port all\` / \`display service-port port 0/0/<port>\`
+  - \`display alarm active\`, \`display alarm history\`
+  - \`display vlan all\`, \`display dba-profile all\`, \`display ont-lineprofile gpon all\`, \`display ont-srvprofile gpon all\`
+  - \`ping <ip>\` (bound — sends a small fixed count and returns)
+- For long / continuous outputs, the wrapper auto-answers the \`---- More ----\` pagination so you receive the full text. Avoid commands that never terminate (\`display alarm history\` with very large histories may take time — use targeted filters).
+- For any STATE-CHANGING command (\`ont add\`, \`ont delete\`, \`service-port\` add/undo, \`vlan add\`, profile create/modify, \`save\`, \`undo ...\`, anything in config view that mutates), STOP and ask the user for explicit approval first. Show them the exact command and a rollback (typically the matching \`undo ...\`). Only after they say "yes" / "approved" / "go ahead" do you execute it.
+- Read-only \`display\` / \`ping\` you may run freely without asking.
+- If the user uploads a file (config dump, log, screenshot of the CLI), analyse it carefully and explain what you see.
+
+## Memory
+- Past conversations on this OLT (with the OLT's sysname and host) are persisted. When the user references prior findings, treat them as authoritative context.
+
+## Command syntax
+The \`run_device_command\` tool expects a single CLI line — exactly what you'd type at the OLT prompt. Examples:
+
+  display version
+  display board 0
+  display ont info 0 0 1 all
+  display ont optical-info 0 0 1 0
+  display service-port all
+  display alarm active
+  ping 8.8.8.8
+  config ; vlan 100 smart ; quit          (semicolon-separated multi-step)
+  config ; interface gpon 0/0 ; ont add 1 sn-auth HWTC12345678 omci ont-lineprofile-id 10 ont-srvprofile-id 10 desc "customer-a" ; quit ; quit
+  save
+
+## Style
+- Be concise but thorough. Use markdown formatting (headings, lists, code blocks).
+- Show command outputs in fenced code blocks (the OLT output is fixed-width text — never reformat as a markdown table).
+- Use ⚠️ for warnings, ✓ for confirmed-good states.
+- When you propose a config change, format it as: PROPOSED COMMAND, REASON, EXPECTED RESULT, ROLLBACK.
+- Never expose the user's credentials in your responses.`;
+
+const TOOLS_MIKROTIK: Anthropic.Tool[] = [
   {
     name: "run_router_command",
     description:
@@ -219,6 +317,25 @@ const TOOLS: Anthropic.Tool[] = [
           type: "string",
           description:
             "A RouterOS command in the form '<menu-path> <subcommand> [key=value ...]'. Examples: '/system/resource print', '/ip/address print', '/routing/bgp/peer print', '/ping 1.1.1.1 count=4', '/tool/traceroute 8.8.8.8 count=1'.",
+        },
+      },
+      required: ["command"],
+    },
+  },
+];
+
+const TOOLS_OLT: Anthropic.Tool[] = [
+  {
+    name: "run_device_command",
+    description:
+      "Execute a single Huawei SmartAX EA5801E CLI line against the user's connected OLT. The wrapper has already done `enable` and disabled paging, and auto-handles ---- More ---- prompts. To run a command that needs config view, prefix with 'config ; ' (semicolon-separated). Examples: 'display version', 'display ont info 0 0 1 all', 'display alarm active', 'ping 8.8.8.8'. After explicit user approval you may run mutations such as 'config ; service-port vlan ... ; quit' and 'save'.",
+    input_schema: {
+      type: "object",
+      properties: {
+        command: {
+          type: "string",
+          description:
+            "A single Huawei SmartAX CLI line (or several lines joined with ' ; '). Examples: 'display version', 'display ont info 0 0 1 all', 'display service-port all', 'display alarm active', 'config ; vlan 100 smart ; quit', 'save'.",
         },
       },
       required: ["command"],
@@ -292,15 +409,26 @@ router.post("/chat/stream", requireUser, async (req: Request, res: Response): Pr
     content: typeof m.content === "string" ? m.content : (m.content as any),
   }));
 
-  const credentialNote = body.credentials
-    ? `\n\nThe user is currently connected to MikroTik router at ${body.credentials.host}:${body.credentials.port ?? 8728} as user "${body.credentials.username}"${body.routerIdentity ? ` (system identity: "${body.routerIdentity}")` : ""}. You may issue commands.`
-    : `\n\nThe user is NOT currently connected to a router. Tell them they must connect first via the Connection screen before you can run any commands.`;
+  const vendor: Vendor = body.vendor === "huawei-olt" ? "huawei-olt" : "mikrotik";
+  const isOlt = vendor === "huawei-olt";
+  const deviceLabel = isOlt ? "Huawei OLT" : "MikroTik router";
+  const defaultPort = isOlt ? 22 : 8728;
 
+  const credentialNote = body.credentials
+    ? `\n\nThe user is currently connected to ${deviceLabel} at ${body.credentials.host}:${body.credentials.port ?? defaultPort} as user "${body.credentials.username}"${body.routerIdentity ? ` (system identity: "${body.routerIdentity}")` : ""}. You may issue commands.`
+    : `\n\nThe user is NOT currently connected to a device. Tell them they must connect first via the Connection screen before you can run any commands.`;
+
+  const mutationVerb = isOlt
+    ? "any command other than display/ping/show — including config-view changes, ont add/delete, service-port add/undo, profile create/modify, save"
+    : "add/set/remove/enable/disable";
   const roleNote = isReadOnly
-    ? `\n\nThe current user has READ-ONLY access. Do not attempt mutating commands (add/set/remove/enable/disable) — the server will reject them. Stick to print/get/export and offer recommendations the user can take to a privileged operator.`
+    ? `\n\nThe current user has READ-ONLY access. Do not attempt mutating commands (${mutationVerb}) — the server will reject them. Stick to read-only commands and offer recommendations the user can take to a privileged operator.`
     : "";
 
-  const system = SYSTEM_PROMPT + credentialNote + roleNote;
+  const basePrompt = isOlt ? OLT_SYSTEM_PROMPT : SYSTEM_PROMPT;
+  const tools = isOlt ? TOOLS_OLT : TOOLS_MIKROTIK;
+  const expectedToolName = isOlt ? "run_device_command" : "run_router_command";
+  const system = basePrompt + credentialNote + roleNote;
 
   // Accumulate the assistant turn(s) for persistence.
   const assistantTextParts: string[] = [];
@@ -314,7 +442,7 @@ router.post("/chat/stream", requireUser, async (req: Request, res: Response): Pr
         model: "claude-sonnet-4-6",
         max_tokens: 8192,
         system,
-        tools: TOOLS,
+        tools,
         messages: history,
       });
 
@@ -340,20 +468,21 @@ router.post("/chat/stream", requireUser, async (req: Request, res: Response): Pr
       for (const tu of toolUses) {
         const cmd = String((tu.input as any)?.command ?? "");
 
-        if (tu.name !== "run_router_command") {
+        if (tu.name !== expectedToolName) {
           toolResults.push({ type: "tool_result", tool_use_id: tu.id, is_error: true, content: `Unknown tool: ${tu.name}` });
           continue;
         }
 
         if (!body.credentials) {
-          const err = "Not connected to a router. User must connect first.";
+          const err = "Not connected to a device. User must connect first.";
           sendEvent(res, "tool_result", { id: tu.id, ok: false, error: err });
           toolCallLog.push({ id: tu.id, command: cmd, status: "error", error: err });
           toolResults.push({ type: "tool_result", tool_use_id: tu.id, is_error: true, content: err });
           continue;
         }
 
-        if (isReadOnly && isMutating(cmd)) {
+        const mutating = isOlt ? isOltMutating(cmd) : isMutating(cmd);
+        if (isReadOnly && mutating) {
           const err = `Blocked: this command is mutating (${cmd}). Your role is read_only — ask a read_write or superuser to perform this change.`;
           sendEvent(res, "tool_result", { id: tu.id, ok: false, error: err });
           toolCallLog.push({ id: tu.id, command: cmd, status: "error", error: err });
@@ -361,7 +490,9 @@ router.post("/chat/stream", requireUser, async (req: Request, res: Response): Pr
           continue;
         }
 
-        const result = await runRouterCommand(body.credentials, cmd);
+        const result = isOlt
+          ? await runOltCommand(body.credentials as OltCreds, cmd)
+          : await runRouterCommand(body.credentials, cmd);
         if (result.ok) {
           const outText = typeof result.output === "string"
             ? result.output

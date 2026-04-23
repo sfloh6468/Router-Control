@@ -1,6 +1,7 @@
 import { Router, type IRouter } from "express";
 import healthRouter from "./health";
 import mikrotikRouter from "./mikrotik";
+import oltRouter from "./olt";
 import chatRouter from "./chat";
 import adminRouter from "./admin";
 import profilesRouter from "./profiles";
@@ -12,6 +13,7 @@ router.use(healthRouter);
 
 // Each subrouter applies its own auth + role middleware per-route.
 router.use(mikrotikRouter);
+router.use(oltRouter);
 router.use(chatRouter);
 router.use(adminRouter);
 router.use(profilesRouter);

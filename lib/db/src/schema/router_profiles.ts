@@ -8,6 +8,7 @@ export const routerProfilesTable = pgTable(
     host: text("host").notNull(),
     port: integer("port"),
     username: text("username").notNull(),
+    vendor: text("vendor").notNull().default("mikrotik"),
     identity: text("identity"),
     routerOs: text("router_os"),
     routerBoard: text("router_board"),

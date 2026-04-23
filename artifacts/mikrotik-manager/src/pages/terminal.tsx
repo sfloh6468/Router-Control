@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from "react";
 import { TerminalSquare, Send, XCircle, ChevronUp, ChevronDown } from "lucide-react";
 import { useMikrotikCommand } from "@/hooks/use-mikrotik";
+import { useOltCommand } from "@/hooks/use-olt";
 import { useRouterContext } from "@/lib/router-context";
 import { Card } from "@/components/ui/card";
 import { motion } from "framer-motion";
@@ -9,6 +10,24 @@ interface HistoryEntry {
   type: 'input' | 'output' | 'error';
   content: string;
 }
+
+const OLT_SUGGESTIONS = [
+  "display version",
+  "display board 0",
+  "display sysuptime",
+  "display sysname",
+  "display ont info 0 0 0 all",
+  "display ont info 0 0 1 all",
+  "display ont optical-info 0 0 0 0",
+  "display service-port all",
+  "display alarm active",
+  "display vlan all",
+  "display dba-profile all",
+  "display ont-lineprofile gpon all",
+  "display ont-srvprofile gpon all",
+  "ping 8.8.8.8",
+  "save",
+];
 
 const COMMAND_SUGGESTIONS = [
   // Read
@@ -38,18 +57,29 @@ const COMMAND_SUGGESTIONS = [
 ];
 
 export default function TerminalPage() {
-  const { credentials } = useRouterContext();
+  const { credentials, vendor } = useRouterContext();
+  const isOlt = vendor === "huawei-olt";
   const [input, setInput] = useState("");
-  const [history, setHistory] = useState<HistoryEntry[]>([
-    { type: 'output', content: 'Connected to RouterOS API Terminal.' },
-    { type: 'output', content: 'Commands use RouterOS format: /ip address print' },
-  ]);
+  const [history, setHistory] = useState<HistoryEntry[]>(
+    isOlt
+      ? [
+          { type: 'output', content: 'Connected to Huawei SmartAX OLT terminal (SSH).' },
+          { type: 'output', content: 'Commands use Huawei CLI format: display version  ·  display ont info 0 0 1 all  ·  save' },
+        ]
+      : [
+          { type: 'output', content: 'Connected to RouterOS API Terminal.' },
+          { type: 'output', content: 'Commands use RouterOS format: /ip address print' },
+        ]
+  );
   const [cmdHistory, setCmdHistory] = useState<string[]>([]);
   const [cmdHistoryIdx, setCmdHistoryIdx] = useState(-1);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const endOfHistoryRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const commandMutation = useMikrotikCommand();
+  const mikrotikMut = useMikrotikCommand();
+  const oltMut = useOltCommand();
+  const commandMutation = isOlt ? oltMut : mikrotikMut;
+  const suggestions = isOlt ? OLT_SUGGESTIONS : COMMAND_SUGGESTIONS;
 
   useEffect(() => {
     endOfHistoryRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -102,7 +132,9 @@ export default function TerminalPage() {
     }
   };
 
-  const prompt = `[${credentials?.username ?? "user"}@MikroTik]`;
+  const prompt = isOlt
+    ? `${credentials?.username ?? "user"}@OLT#`
+    : `[${credentials?.username ?? "user"}@MikroTik]`;
 
   return (
     <div className="space-y-6 h-full flex flex-col">
@@ -112,7 +144,9 @@ export default function TerminalPage() {
             <TerminalSquare className="h-8 w-8 text-primary" />
             Terminal
           </h1>
-          <p className="text-muted-foreground mt-1">Execute RouterOS API commands</p>
+          <p className="text-muted-foreground mt-1">
+            {isOlt ? "Execute Huawei SmartAX CLI commands" : "Execute RouterOS API commands"}
+          </p>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -137,7 +171,7 @@ export default function TerminalPage() {
           animate={{ opacity: 1, y: 0 }}
           className="grid grid-cols-2 md:grid-cols-3 gap-2"
         >
-          {COMMAND_SUGGESTIONS.map((cmd) => (
+          {suggestions.map((cmd) => (
             <button
               key={cmd}
               onClick={() => {
@@ -198,7 +232,7 @@ export default function TerminalPage() {
             onKeyDown={handleKeyDown}
             disabled={commandMutation.isPending}
             className="flex-1 bg-transparent border-none outline-none font-mono text-sm text-foreground placeholder:text-muted-foreground/50 focus:ring-0"
-            placeholder="e.g., /ip address print"
+            placeholder={isOlt ? "e.g., display version" : "e.g., /ip address print"}
             autoFocus
             autoComplete="off"
             spellCheck={false}

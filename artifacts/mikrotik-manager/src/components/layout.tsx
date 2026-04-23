@@ -13,6 +13,9 @@ import {
   Loader2,
   User as UserIcon,
   Shield,
+  Cable,
+  AlertOctagon,
+  Plug,
 } from "lucide-react";
 import { useClerk, useUser, Show } from "@clerk/react";
 import { useRouterContext } from "@/lib/router-context";
@@ -22,7 +25,7 @@ import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { ChatSidebar } from "@/components/chat-sidebar";
 
-const navItems = [
+const mikrotikNav = [
   { name: "Dashboard", href: "/dashboard", icon: Activity },
   { name: "Interfaces", href: "/interfaces", icon: Network },
   { name: "IP Addresses", href: "/ip-addresses", icon: Server },
@@ -32,9 +35,20 @@ const navItems = [
   { name: "Terminal", href: "/terminal", icon: TerminalSquare },
 ];
 
+const oltNav = [
+  { name: "Dashboard", href: "/dashboard", icon: Activity },
+  { name: "ONUs", href: "/onts", icon: Cable },
+  { name: "Service Ports", href: "/service-ports", icon: Plug },
+  { name: "Alarms", href: "/alarms", icon: AlertOctagon },
+  { name: "Terminal", href: "/terminal", icon: TerminalSquare },
+];
+
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
-  const { isConnected, credentials, meta, setCredentials } = useRouterContext();
+  const { isConnected, credentials, meta, setCredentials, vendor } = useRouterContext();
+  const isOlt = vendor === "huawei-olt";
+  const navItems = isOlt ? oltNav : mikrotikNav;
+  const vendorLabel = isOlt ? "Huawei OLT" : "MikroTik";
   const { user } = useUser();
   const { signOut } = useClerk();
   const [exporting, setExporting] = useState(false);
@@ -43,7 +57,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const isSuper = me.data?.isSuper === true;
 
   const handleExport = async () => {
-    if (!credentials) return;
+    if (!credentials || isOlt) return;
     setExporting(true);
     try {
       const res = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/mikrotik/export`, {
@@ -118,7 +132,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <Activity className="h-5 w-5 text-primary" />
           </div>
           <div className="min-w-0">
-            <h1 className="font-bold text-lg leading-tight tracking-tight">MikroTik</h1>
+            <h1 className="font-bold text-lg leading-tight tracking-tight">{vendorLabel}</h1>
             <p
               className="text-xs text-muted-foreground font-mono flex items-center gap-1.5 truncate"
               title={meta.identity ? `${meta.identity} (${credentials?.host})` : credentials?.host}
@@ -187,20 +201,22 @@ export function Layout({ children }: { children: React.ReactNode }) {
               )}
             </div>
           </div>
-          <button
-            onClick={handleExport}
-            disabled={exporting}
-            className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-sm font-medium text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
-          >
-            {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
-            {exporting ? "Exporting…" : "Download Config"}
-          </button>
+          {!isOlt && (
+            <button
+              onClick={handleExport}
+              disabled={exporting}
+              className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-sm font-medium text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+            >
+              {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {exporting ? "Exporting…" : "Download Config"}
+            </button>
+          )}
           <button
             onClick={() => setCredentials(null)}
             className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-sm font-medium text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
           >
             <LogOut className="h-4 w-4" />
-            Disconnect Router
+            Disconnect Device
           </button>
           <button
             onClick={() => signOut()}

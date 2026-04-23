@@ -19,6 +19,10 @@ import DhcpLeasesPage from "@/pages/dhcp";
 import WirelessClientsPage from "@/pages/wireless";
 import TerminalPage from "@/pages/terminal";
 import AdminPage from "@/pages/admin";
+import OltDashboardPage from "@/pages/olt-dashboard";
+import OltOntsPage from "@/pages/olt-onts";
+import OltServicePortsPage from "@/pages/olt-service-ports";
+import OltAlarmsPage from "@/pages/olt-alarms";
 
 const queryClient = new QueryClient();
 
@@ -114,19 +118,44 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
 }
 
 function AppRoutes() {
-  const { isConnected } = useRouterContext();
+  const { isConnected, vendor } = useRouterContext();
+  const isOlt = vendor === "huawei-olt";
   return (
     <Layout>
       <Switch>
         <Route path="/">
           {isConnected ? <Redirect to="/dashboard" /> : <ConnectionPage />}
         </Route>
-        <Route path="/dashboard"><ProtectedRoute component={DashboardPage} /></Route>
-        <Route path="/interfaces"><ProtectedRoute component={InterfacesPage} /></Route>
-        <Route path="/ip-addresses"><ProtectedRoute component={IpAddressesPage} /></Route>
-        <Route path="/firewall"><ProtectedRoute component={FirewallPage} /></Route>
-        <Route path="/dhcp"><ProtectedRoute component={DhcpLeasesPage} /></Route>
-        <Route path="/wireless"><ProtectedRoute component={WirelessClientsPage} /></Route>
+
+        {isOlt ? (
+          <>
+            <Route path="/dashboard"><ProtectedRoute component={OltDashboardPage} /></Route>
+            <Route path="/onts"><ProtectedRoute component={OltOntsPage} /></Route>
+            <Route path="/service-ports"><ProtectedRoute component={OltServicePortsPage} /></Route>
+            <Route path="/alarms"><ProtectedRoute component={OltAlarmsPage} /></Route>
+            {/* Block MikroTik-only paths for OLT sessions by sending them home. */}
+            <Route path="/interfaces"><Redirect to="/dashboard" /></Route>
+            <Route path="/ip-addresses"><Redirect to="/dashboard" /></Route>
+            <Route path="/firewall"><Redirect to="/dashboard" /></Route>
+            <Route path="/dhcp"><Redirect to="/dashboard" /></Route>
+            <Route path="/wireless"><Redirect to="/dashboard" /></Route>
+          </>
+        ) : (
+          <>
+            <Route path="/dashboard"><ProtectedRoute component={DashboardPage} /></Route>
+            <Route path="/interfaces"><ProtectedRoute component={InterfacesPage} /></Route>
+            <Route path="/ip-addresses"><ProtectedRoute component={IpAddressesPage} /></Route>
+            <Route path="/firewall"><ProtectedRoute component={FirewallPage} /></Route>
+            <Route path="/dhcp"><ProtectedRoute component={DhcpLeasesPage} /></Route>
+            <Route path="/wireless"><ProtectedRoute component={WirelessClientsPage} /></Route>
+            {/* Block OLT-only paths for MikroTik sessions. */}
+            <Route path="/onts"><Redirect to="/dashboard" /></Route>
+            <Route path="/service-ports"><Redirect to="/dashboard" /></Route>
+            <Route path="/alarms"><Redirect to="/dashboard" /></Route>
+          </>
+        )}
+
+        {/* Shared */}
         <Route path="/terminal"><ProtectedRoute component={TerminalPage} /></Route>
         <Route path="/admin"><AdminPage /></Route>
         <Route component={NotFound} />
@@ -144,10 +173,10 @@ function ClerkProviderWithRoutes() {
       appearance={clerkAppearance}
       localization={{
         signIn: {
-          start: { title: "Welcome to MikroTik Access", subtitle: "Sign in to manage your routers" },
+          start: { title: "Welcome to Network Device Manager", subtitle: "Sign in to manage your MikroTik routers and Huawei OLTs" },
         },
         signUp: {
-          start: { title: "Create your account", subtitle: "Manage MikroTik routers from anywhere" },
+          start: { title: "Create your account", subtitle: "Manage MikroTik routers and Huawei OLTs from anywhere" },
         },
       }}
       routerPush={(to) => setLocation(stripBase(to))}

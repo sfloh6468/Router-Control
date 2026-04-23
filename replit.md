@@ -93,11 +93,12 @@ Generated React Query hooks and fetch client from the OpenAPI spec (e.g. `useHea
 
 ### `artifacts/mikrotik-manager` (`@workspace/mikrotik-manager`)
 
-React + Vite frontend for managing MikroTik routers. Dark-mode professional network admin UI. Mounted at `/` (preview path `/`).
+React + Vite frontend, branded **"Network Device Manager"**. Manages **MikroTik routers and Huawei SmartAX OLTs** from a single unified app. Dark-mode professional network admin UI. Mounted at `/` (preview path `/`).
 
-- Pages: connection, dashboard, interfaces, ip-addresses, firewall, dhcp, wireless, terminal
-- State: `src/lib/router-context.tsx` stores credentials and current route
-- Hooks: `src/hooks/use-mikrotik.ts` wraps generated API hooks with credential injection AND write mutations
+- Pages (MikroTik): connection, dashboard, interfaces, ip-addresses, firewall, dhcp, wireless, terminal
+- Pages (Huawei OLT): connection, olt-dashboard, olt-onts, olt-service-ports, olt-alarms, terminal (vendor-aware)
+- State: `src/lib/router-context.tsx` stores credentials, vendor (`mikrotik` | `huawei-olt`), and meta. Auto-probes the right backend (`/api/mikrotik/system` vs `/api/olt/dashboard`) per vendor on app load to verify a saved session is still alive.
+- Hooks: `src/hooks/use-mikrotik.ts` (RouterOS), `src/hooks/use-olt.ts` (Huawei SSH)
 - Entry: `src/main.tsx`
 - Dev: `pnpm --filter @workspace/mikrotik-manager run dev`
 
@@ -147,7 +148,32 @@ The backend supports **four transports** so the app can reach a router whatever 
 - For structured `menu(p).get()` (dashboards): runs `<path> print as-value without-paging` and parses semicolon-separated key=val lines per record. Mutations build raw RouterOS CLI commands (`/<path> add k=v ...`, `set <id> ...`, `remove <id>`, `enable/disable <id>`).
 - Wide algorithm whitelist (curve25519/dh-group14/group1, ed25519/rsa-sha2/ssh-rsa, aes-ctr/gcm/cbc) to handle older RouterOS SSH defaults.
 
-**Connect screen UI (`artifacts/mikrotik-manager/src/pages/connection.tsx`):** Transport `<select>` above the port field. Picking a transport snaps the port input to the new default (still manually overridable). Shows transport-specific hints + warnings (SSH = "dashboards unavailable", REST = "needs RouterOS 7.1+ with www service").
+**Connect screen UI (`artifacts/mikrotik-manager/src/pages/connection.tsx`):** Vendor pill selector at the top (MikroTik / Huawei OLT). Picking Huawei OLT locks transport to SSH and port to 22 (transport selector hidden). Picking MikroTik shows the four-transport `<select>`; choosing a transport snaps the port input to the new default (still manually overridable). Shows transport-specific hints + warnings (SSH = "dashboards unavailable", REST = "needs RouterOS 7.1+ with www service").
+
+## Huawei OLT Support (added 2026-04-23, Task #2)
+
+The same app manages **Huawei SmartAX EA5800-family OLTs (e.g. EA5801E)** alongside MikroTik. Vendor-aware throughout: schema, routes, chat system prompt, navigation, and dashboards all switch on a single `vendor` discriminator.
+
+**Backend (`artifacts/api-server/src/lib/huawei-olt.ts`):** Pure SSH adapter built on `ssh2`. Spawns a shell, drives the EA5801E CLI through `enable` → `config` mode automatically, sets `scroll 512` to disable More-paging, queues commands per-connection (one in-flight at a time), and strips banners/prompts/echoed input from output. Handles surprise `---- More ----` prompts mid-stream by sending space-then-`q`. Wide algorithm whitelist (curve25519/dh-group14, ed25519/rsa-sha2/ssh-rsa, aes-ctr/gcm/cbc, hmac-sha2/sha1) for older Huawei firmware.
+
+**Routes (`artifacts/api-server/src/routes/olt.ts`):** All gated by `requireAuth`; mutating endpoints additionally gated by `requireWriter`.
+- `POST /api/olt/connect` — verify SSH + grab `display version`/`sysname`
+- `POST /api/olt/dashboard` — version + board + sysuptime + active alarm count
+- `POST /api/olt/onts` — scan all GPON ports via `display ont info 0 0 <port> all`, return parsed rows
+- `POST /api/olt/ont/optical` — `display ont optical-info <f> <s> <p> <ont>` for one ONT
+- `POST /api/olt/service-ports` — `display service-port all` parsed into rows + raw
+- `POST /api/olt/service-port/add` — builds full `service-port vlan ... gpon ... ont ... gemport ... user-vlan ... inbound/outbound traffic-table index ...` line
+- `POST /api/olt/service-port/delete` — `undo service-port <index>` (with mutating-guard)
+- `POST /api/olt/alarms` — `display alarm active` parsed
+- `POST /api/olt/command` — raw arbitrary CLI command (writer-gated, used by terminal page and AI tool)
+
+**Chat system prompt (vendor-aware, `artifacts/api-server/src/routes/chat.ts`):** When the request body carries `vendor: "huawei-olt"`, the chat handler swaps in `OLT_SYSTEM_PROMPT` (senior Huawei OLT engineer persona), the `TOOLS_OLT` toolset (single tool `run_device_command(command)`), the `runOltCommand` runner that hits the SSH adapter, and the `isOltMutating()` guard (rejects `service-port`, `ont add/delete`, `interface`, `save`, etc. for read-only users). MikroTik path is unchanged.
+
+**Schema (`lib/db/src/schema/router_profiles.ts`):** New `vendor text NOT NULL DEFAULT 'mikrotik'` column. Persisted on `/api/profiles/upsert` (whitelisted to `mikrotik` | `huawei-olt`). Non-destructive — existing rows default to `mikrotik`.
+
+**Frontend layout/router behavior:** `useRouterContext()` exposes `vendor` and switches the sidebar nav (`mikrotikNav` vs `oltNav`), the dashboard route component, the header brand label ("MikroTik" vs "Huawei OLT"), hides "Download Config" for OLT, and renames the disconnect button to "Disconnect Device". Terminal page swaps prompt format (`user@OLT#` vs `[user@MikroTik]`), suggestions list (Huawei `display ...` commands vs MikroTik `/ip ...`), and command runner.
+
+**EA5801E CLI quirks:** User mode `>`, enable mode `#`, config mode `(config)#`. Multi-step in one shot uses `;` separators. Saving config requires explicit `save` (or `save fast`). `display ont info 0 0 <port> all` is the canonical "list ONTs" command — the OLT does not have a single "all ports" variant, hence the per-port scan in the ONUs route.
 
 **Build cache gotcha:** `lib/api-zod` and `lib/api-client-react` had stale `dist/` folders with old `.d.ts` files. After running `pnpm --filter @workspace/api-spec run codegen`, those dist folders must be deleted (or `tsc --build` re-run) — otherwise TypeScript reads the cached declarations and won't see new fields like `transport`. Easy fix: `rm -rf lib/api-zod/dist lib/api-client-react/dist lib/db/dist`.
 
