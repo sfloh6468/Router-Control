@@ -119,16 +119,18 @@ export default function OltServicePortsPage() {
                 <th className="px-3 py-2 text-left">ONT</th>
                 <th className="px-3 py-2 text-left">GEM</th>
                 <th className="px-3 py-2 text-left">User VLAN</th>
+                <th className="px-3 py-2 text-left" title="Inbound traffic-table index">In TT</th>
+                <th className="px-3 py-2 text-left" title="Outbound traffic-table index">Out TT</th>
                 <th className="px-3 py-2 text-left">State</th>
                 <th className="px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {q.isLoading && (
-                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">Loading…</td></tr>
+                <tr><td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">Loading…</td></tr>
               )}
               {!q.isLoading && rows.length === 0 && (
-                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">No service-ports configured.</td></tr>
+                <tr><td colSpan={10} className="px-3 py-6 text-center text-muted-foreground">No service-ports configured.</td></tr>
               )}
               {rows.map((row) => (
                 <tr key={row.index} className="border-t border-border/40 hover:bg-accent/30">
@@ -138,6 +140,8 @@ export default function OltServicePortsPage() {
                   <td className="px-3 py-2 font-mono text-xs">{row.ontIndex ?? "—"}</td>
                   <td className="px-3 py-2 font-mono text-xs">{row.gemport ?? "—"}</td>
                   <td className="px-3 py-2 font-mono text-xs">{row.uservlan ?? "—"}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{row.inboundTt ?? "—"}</td>
+                  <td className="px-3 py-2 font-mono text-xs">{row.outboundTt ?? "—"}</td>
                   <td className="px-3 py-2 text-xs">{row.state ?? "—"}</td>
                   <td className="px-3 py-2 text-right">
                     {confirmIdx === row.index ? (

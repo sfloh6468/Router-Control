@@ -151,28 +151,86 @@ interface OntRow {
 }
 
 /**
- * Parse `display ont info 0 0 X all` output. Falls back to a permissive
- * column-split scheme — the SmartAX text format varies slightly between
- * firmware revisions but always contains lines starting with "  N  N  N ".
+ * Parse `display ont info 0 0 X all` output. The EA5800 family emits this
+ * table in two different shapes depending on firmware:
+ *
+ *   (A) "wide" form, port prefix on each row:
+ *       "  0/0/1   0   HWTC12345678   online   active   match"
+ *
+ *   (B) "scoped" form (command was issued for a specific port, so the
+ *       port column is omitted):
+ *       "  0   HWTC12345678   active     online   normal   match"
+ *
+ * We try (A) first, then fall back to (B). Header lines and "Total" /
+ * "----" separators are skipped.
  */
 function parseOntInfoBlock(text: string, port: string): OntRow[] {
   const out: OntRow[] = [];
-  const lines = text.split("\n");
-  for (const raw of lines) {
+  const seen = new Set<string>();
+  const push = (r: OntRow) => {
+    const key = `${r.index}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push(r);
+  };
+  for (const raw of text.split("\n")) {
     const line = raw.trimEnd();
-    // Match lines like:
-    //   "  0/0/1  0  HWTC12345678  online   active   match"
-    const m = line.match(
-      /^\s*(\d+\/\d+\/\d+)\s+(\d+)\s+([A-Z0-9]{4,32})\s+(\S+)\s+(\S+)?\s*(\S+)?\s*$/i,
+    if (!line || /^[-\s]*$/.test(line)) continue;
+    if (/^\s*(F\/S\/P|ONT[-\s]?ID|SN|Description|Run\s+state|Config\s+state)/i.test(line)) {
+      continue; // header
+    }
+
+    // (A) wide form
+    const wide = line.match(
+      /^\s*(\d+\/\d+\/\d+)\s+(\d+)\s+([A-Z0-9]{4,32})\s+(\S+)(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i,
     );
-    if (m) {
-      out.push({
+    if (wide) {
+      push({
         port,
-        index: m[2],
-        sn: m[3] ?? null,
-        runState: m[4] ?? null,
-        configState: m[5] ?? null,
-        matchState: m[6] ?? null,
+        index: wide[2],
+        sn: wide[3] ?? null,
+        runState: wide[4] ?? null,
+        configState: wide[5] ?? null,
+        matchState: wide[6] ?? null,
+        description: null,
+        lastDownCause: null,
+      });
+      continue;
+    }
+
+    // (B) scoped form — first column is ONT-ID, second is SN, then the
+    // status columns. SN may be absent on some firmware (uncommon).
+    const scoped = line.match(
+      /^\s*(\d{1,4})\s+([A-Z0-9]{4,32})\s+(\S+)(?:\s+(\S+))?(?:\s+(\S+))?(?:\s+(\S+))?\s*$/i,
+    );
+    if (scoped) {
+      // The column layout for (B) is typically:
+      //   ONT-ID  SN  CONTROL  RUN  CONFIG  MATCH
+      // We map the most useful three (run/config/match) preferring the
+      // tokens after CONTROL when six columns are present.
+      const idx = scoped[1];
+      const sn = scoped[2];
+      const cols = [scoped[3], scoped[4], scoped[5], scoped[6]].filter(Boolean) as string[];
+      let runState: string | null = null;
+      let configState: string | null = null;
+      let matchState: string | null = null;
+      if (cols.length >= 4) {
+        // CONTROL RUN CONFIG MATCH
+        [, runState, configState, matchState] = cols;
+      } else {
+        [runState, configState, matchState] = [
+          cols[0] ?? null,
+          cols[1] ?? null,
+          cols[2] ?? null,
+        ];
+      }
+      push({
+        port,
+        index: idx,
+        sn,
+        runState,
+        configState,
+        matchState,
         description: null,
         lastDownCause: null,
       });
@@ -240,6 +298,31 @@ const OpticalBody = Creds.extend({
   ontIndex: z.coerce.number().int().nonnegative(),
 });
 
+interface OpticalInfo {
+  rxPowerDbm: number | null;
+  txPowerDbm: number | null;
+  voltageV: number | null;
+  temperatureC: number | null;
+  biasMa: number | null;
+}
+
+/** Parse `display ont optical-info` into structured Rx/Tx/Voltage/Temp/Bias. */
+function parseOpticalInfo(text: string): OpticalInfo {
+  const num = (re: RegExp): number | null => {
+    const m = text.match(re);
+    if (!m) return null;
+    const n = parseFloat(m[1].replace(/,/g, ""));
+    return Number.isFinite(n) ? n : null;
+  };
+  return {
+    rxPowerDbm: num(/(?:RX|Rx)[\s-]*(?:optical\s+)?power[^:=]*[:=]\s*(-?\d+(?:\.\d+)?)/i),
+    txPowerDbm: num(/(?:TX|Tx)[\s-]*(?:optical\s+)?power[^:=]*[:=]\s*(-?\d+(?:\.\d+)?)/i),
+    voltageV: num(/(?:Supply\s+)?(?:Voltage)[^:=]*[:=]\s*(-?\d+(?:\.\d+)?)/i),
+    temperatureC: num(/Temperature[^:=]*[:=]\s*(-?\d+(?:\.\d+)?)/i),
+    biasMa: num(/(?:Laser\s+)?bias\s+current[^:=]*[:=]\s*(-?\d+(?:\.\d+)?)/i),
+  };
+}
+
 router.post("/olt/ont/optical", async (req, res): Promise<void> => {
   // Accept legacy `port` in addition to `ontPort` so the credentials' "port"
   // field doesn't collide with the GPON port id.
@@ -261,7 +344,7 @@ router.post("/olt/ont/optical", async (req, res): Promise<void> => {
         `display ont optical-info ${f} ${s} ${p} ${d.ontIndex}`,
       ),
     );
-    res.json({ output: text });
+    res.json({ output: text, ...parseOpticalInfo(text) });
   } catch (err) {
     res.status(400).json({ error: errMsg(err) });
   }
@@ -315,6 +398,8 @@ interface ServicePortRow {
   ontIndex: string | null;
   gemport: string | null;
   uservlan: string | null;
+  inboundTt: string | null;   // inbound traffic-table index
+  outboundTt: string | null;  // outbound traffic-table index
   state: string | null;
 }
 
@@ -322,33 +407,64 @@ function parseServicePorts(text: string): ServicePortRow[] {
   const out: ServicePortRow[] = [];
   for (const raw of text.split("\n")) {
     const line = raw.trimEnd();
-    // Generic match: "<idx> <vlan> <gponN/N/N> <ontid> <gemport> <uservlan> ..."
-    const m = line.match(
-      /^\s*(\d+)\s+(\d+)\s+\S*\s*(\d+\/\d+\/\d+)\s+(\d+)\s+(\d+)\s+(\d+|other|untag|trans-?\S*)\s+/i,
+    if (!line || /^[-\s]*$/.test(line)) continue;
+    // Skip header rows.
+    if (/^\s*INDEX/i.test(line) || /^\s*VLAN\s+/i.test(line)) continue;
+
+    // Wide layout used by EA5800 `display service-port all`:
+    // "  N  vlan  ATTR  GPON 0/0/N  ontIdx  gemport  uservlan  ...  in_tt  out_tt  state"
+    const wide = line.match(
+      /^\s*(\d+)\s+(\d+)\s+\S*\s*(\d+\/\d+\/\d+)\s+(\d+)\s+(\d+)\s+(\d+|other|untag|trans-?\S*)\s+(\S+)\s+(\S+)\s+(\S+)\s+(\S+)\s+(up|down|active|inactive|deactive)?\s*$/i,
     );
-    if (m) {
+    if (wide) {
       out.push({
-        index: m[1],
-        vlan: m[2],
-        port: m[3],
-        ontIndex: m[4],
-        gemport: m[5],
-        uservlan: m[6],
-        state: null,
+        index: wide[1],
+        vlan: wide[2],
+        port: wide[3],
+        ontIndex: wide[4],
+        gemport: wide[5],
+        uservlan: wide[6],
+        inboundTt: wide[9] ?? null,
+        outboundTt: wide[10] ?? null,
+        state: wide[11] ?? null,
       });
       continue;
     }
-    // Simpler match: "  <idx>  <vlan>  ... up/down"
-    const m2 = line.match(/^\s*(\d+)\s+(\d+)\s+(.*?)\s+(up|down|active|inactive)\s*$/i);
-    if (m2) {
+
+    // Narrower fallback that still captures the front columns and tries to
+    // pull the last two numeric columns as the inbound/outbound traffic
+    // table indices, tolerating extra/missing middle columns.
+    const front = line.match(
+      /^\s*(\d+)\s+(\d+)\s+\S*\s*(\d+\/\d+\/\d+)\s+(\d+)\s+(\d+)\s+(\d+|other|untag|trans-?\S*)\s+/i,
+    );
+    if (front) {
+      const tail = line.match(/(\d+)\s+(\d+)\s+(up|down|active|inactive|deactive)?\s*$/i);
       out.push({
-        index: m2[1],
-        vlan: m2[2],
+        index: front[1],
+        vlan: front[2],
+        port: front[3],
+        ontIndex: front[4],
+        gemport: front[5],
+        uservlan: front[6],
+        inboundTt: tail?.[1] ?? null,
+        outboundTt: tail?.[2] ?? null,
+        state: tail?.[3] ?? null,
+      });
+      continue;
+    }
+
+    const simple = line.match(/^\s*(\d+)\s+(\d+)\s+(.*?)\s+(up|down|active|inactive)\s*$/i);
+    if (simple) {
+      out.push({
+        index: simple[1],
+        vlan: simple[2],
         port: null,
         ontIndex: null,
         gemport: null,
         uservlan: null,
-        state: m2[4],
+        inboundTt: null,
+        outboundTt: null,
+        state: simple[4],
       });
     }
   }

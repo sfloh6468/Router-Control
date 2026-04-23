@@ -62,7 +62,17 @@ export interface ServicePortRow {
   ontIndex: string | null;
   gemport: string | null;
   uservlan: string | null;
+  inboundTt: string | null;
+  outboundTt: string | null;
   state: string | null;
+}
+
+export interface OpticalInfo {
+  rxPowerDbm: number | null;
+  txPowerDbm: number | null;
+  voltageV: number | null;
+  temperatureC: number | null;
+  biasMa: number | null;
 }
 
 export interface AlarmRow {
@@ -95,7 +105,7 @@ export function useOltOntOptical() {
   const { credentials } = useRouterContext();
   return useMutation({
     mutationFn: (vars: { port: string; ontIndex: number }) =>
-      oltPost<{ output: string }>("/olt/ont/optical", {
+      oltPost<{ output: string } & OpticalInfo>("/olt/ont/optical", {
         ...credPayload(credentials),
         ontPort: vars.port,
         ontIndex: vars.ontIndex,

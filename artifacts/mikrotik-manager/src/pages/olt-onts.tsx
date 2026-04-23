@@ -18,6 +18,17 @@ import {
   type OntRow,
 } from "@/hooks/use-olt";
 
+function Metric({ label, value, unit }: { label: string; value: number | null; unit: string }) {
+  return (
+    <div className="rounded-md border border-border/60 bg-accent/20 px-3 py-2">
+      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
+      <div className="font-mono text-sm">
+        {value === null ? "—" : `${value} ${unit}`}
+      </div>
+    </div>
+  );
+}
+
 function StateBadge({ state }: { state: string | null }) {
   if (!state) return <span className="text-muted-foreground">—</span>;
   const s = state.toLowerCase();
@@ -118,14 +129,32 @@ function OntTableRow({ row }: { row: OntRow }) {
       )}
       {open && (
         <tr className="bg-black/40">
-          <td colSpan={8} className="px-3 py-3">
-            <pre className="font-mono text-xs whitespace-pre-wrap leading-relaxed text-slate-200 max-h-64 overflow-auto">
-              {optical.isPending
-                ? "Loading optical info…"
-                : optical.error
-                  ? `Error: ${optical.error instanceof Error ? optical.error.message : String(optical.error)}`
-                  : optical.data?.output ?? "(no output)"}
-            </pre>
+          <td colSpan={8} className="px-3 py-3 space-y-3">
+            {optical.isPending ? (
+              <div className="text-xs text-slate-300">Loading optical info…</div>
+            ) : optical.error ? (
+              <div className="text-xs text-destructive">
+                Error: {optical.error instanceof Error ? optical.error.message : String(optical.error)}
+              </div>
+            ) : (
+              <>
+                {optical.data && (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2">
+                    <Metric label="Rx" value={optical.data.rxPowerDbm} unit="dBm" />
+                    <Metric label="Tx" value={optical.data.txPowerDbm} unit="dBm" />
+                    <Metric label="Temp" value={optical.data.temperatureC} unit="°C" />
+                    <Metric label="Voltage" value={optical.data.voltageV} unit="V" />
+                    <Metric label="Bias" value={optical.data.biasMa} unit="mA" />
+                  </div>
+                )}
+                <details className="text-xs text-slate-300">
+                  <summary className="cursor-pointer text-muted-foreground">Raw output</summary>
+                  <pre className="font-mono text-xs whitespace-pre-wrap leading-relaxed text-slate-200 max-h-64 overflow-auto mt-2">
+                    {optical.data?.output ?? "(no output)"}
+                  </pre>
+                </details>
+              </>
+            )}
           </td>
         </tr>
       )}
