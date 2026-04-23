@@ -1,8 +1,22 @@
 import React, { useState } from "react";
-import { Cable, RefreshCw, Eye, ChevronDown, ChevronRight } from "lucide-react";
+import {
+  Cable,
+  RefreshCw,
+  Eye,
+  ChevronDown,
+  ChevronRight,
+  Power,
+  PowerOff,
+  Trash2,
+} from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useOltOnts, useOltOntOptical, type OntRow } from "@/hooks/use-olt";
+import {
+  useOltOnts,
+  useOltOntOptical,
+  useOltOntAction,
+  type OntRow,
+} from "@/hooks/use-olt";
 
 function StateBadge({ state }: { state: string | null }) {
   if (!state) return <span className="text-muted-foreground">—</span>;
@@ -20,13 +34,26 @@ function StateBadge({ state }: { state: string | null }) {
   );
 }
 
-function OpticalRow({ row }: { row: OntRow }) {
-  const m = useOltOntOptical();
+function OntTableRow({ row }: { row: OntRow }) {
+  const optical = useOltOntOptical();
+  const action = useOltOntAction();
   const [open, setOpen] = useState(false);
   const fetchOptical = () => {
     setOpen(true);
-    m.mutate({ port: row.port, ontIndex: Number(row.index) });
+    optical.mutate({ port: row.port, ontIndex: Number(row.index) });
   };
+
+  const runAction = (a: "activate" | "deactivate" | "delete") => {
+    if (a === "delete") {
+      const ok = window.confirm(
+        `Delete ONT ${row.index} on port ${row.port}? This cannot be undone from the UI.`,
+      );
+      if (!ok) return;
+    }
+    action.mutate({ port: row.port, ontIndex: Number(row.index), action: a });
+  };
+
+  const actionPending = action.isPending;
   return (
     <>
       <tr className="border-t border-border/40 hover:bg-accent/30">
@@ -36,25 +63,68 @@ function OpticalRow({ row }: { row: OntRow }) {
         <td className="px-3 py-2"><StateBadge state={row.runState} /></td>
         <td className="px-3 py-2"><StateBadge state={row.configState} /></td>
         <td className="px-3 py-2"><StateBadge state={row.matchState} /></td>
+        <td className="px-3 py-2 text-xs text-muted-foreground">
+          {row.lastDownCause ?? "—"}
+        </td>
         <td className="px-3 py-2 text-right">
-          <button
-            onClick={() => (open ? setOpen(false) : fetchOptical())}
-            className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-          >
-            {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-            <Eye className="h-3 w-3" /> Optical
-          </button>
+          <div className="inline-flex items-center gap-2">
+            <button
+              onClick={() => runAction("activate")}
+              disabled={actionPending}
+              title="ont activate"
+              className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:underline disabled:opacity-40"
+            >
+              <Power className="h-3 w-3" /> Activate
+            </button>
+            <button
+              onClick={() => runAction("deactivate")}
+              disabled={actionPending}
+              title="ont deactivate"
+              className="inline-flex items-center gap-1 text-xs text-amber-600 hover:underline disabled:opacity-40"
+            >
+              <PowerOff className="h-3 w-3" /> Deactivate
+            </button>
+            <button
+              onClick={() => runAction("delete")}
+              disabled={actionPending}
+              title="ont delete"
+              className="inline-flex items-center gap-1 text-xs text-destructive hover:underline disabled:opacity-40"
+            >
+              <Trash2 className="h-3 w-3" /> Delete
+            </button>
+            <button
+              onClick={() => (open ? setOpen(false) : fetchOptical())}
+              className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
+            >
+              {open ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+              <Eye className="h-3 w-3" /> Optical
+            </button>
+          </div>
         </td>
       </tr>
+      {action.isError && (
+        <tr className="bg-destructive/10">
+          <td colSpan={8} className="px-3 py-2 text-xs text-destructive">
+            {action.error instanceof Error ? action.error.message : "Action failed"}
+          </td>
+        </tr>
+      )}
+      {action.data && !action.data.success && (
+        <tr className="bg-destructive/10">
+          <td colSpan={8} className="px-3 py-2 text-xs text-destructive font-mono whitespace-pre-wrap">
+            {action.data.output || "Command rejected by OLT"}
+          </td>
+        </tr>
+      )}
       {open && (
         <tr className="bg-black/40">
-          <td colSpan={7} className="px-3 py-3">
+          <td colSpan={8} className="px-3 py-3">
             <pre className="font-mono text-xs whitespace-pre-wrap leading-relaxed text-slate-200 max-h-64 overflow-auto">
-              {m.isPending
+              {optical.isPending
                 ? "Loading optical info…"
-                : m.error
-                  ? `Error: ${m.error instanceof Error ? m.error.message : String(m.error)}`
-                  : m.data?.output ?? "(no output)"}
+                : optical.error
+                  ? `Error: ${optical.error instanceof Error ? optical.error.message : String(optical.error)}`
+                  : optical.data?.output ?? "(no output)"}
             </pre>
           </td>
         </tr>
@@ -102,18 +172,19 @@ export default function OltOntsPage() {
                 <th className="px-3 py-2 text-left">Run State</th>
                 <th className="px-3 py-2 text-left">Config</th>
                 <th className="px-3 py-2 text-left">Match</th>
+                <th className="px-3 py-2 text-left">Last Down Cause</th>
                 <th className="px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {q.isLoading && (
-                <tr><td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">Scanning all GPON ports…</td></tr>
+                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">Scanning all GPON ports…</td></tr>
               )}
               {!q.isLoading && onts.length === 0 && (
-                <tr><td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">No ONTs discovered.</td></tr>
+                <tr><td colSpan={8} className="px-3 py-6 text-center text-muted-foreground">No ONTs discovered.</td></tr>
               )}
               {onts.map((row, i) => (
-                <OpticalRow key={`${row.port}-${row.index}-${i}`} row={row} />
+                <OntTableRow key={`${row.port}-${row.index}-${i}`} row={row} />
               ))}
             </tbody>
           </table>
@@ -121,7 +192,7 @@ export default function OltOntsPage() {
       </Card>
 
       <p className="text-xs text-muted-foreground">
-        Tip: For provisioning (ont add / delete / activate / deactivate), use the chat assistant or terminal.
+        Tip: For adding new ONTs and other provisioning beyond activate/deactivate/delete, use the chat assistant or terminal.
       </p>
     </div>
   );

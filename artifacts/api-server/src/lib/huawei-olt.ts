@@ -10,7 +10,49 @@
  * route handler — many endpoints (dashboard, ONT list) issue several
  * `display ...` commands and benefit from reusing a single shell.
  */
-import { Client as SshClient, type ClientChannel } from "ssh2";
+import { Client as SshClient, type ClientChannel, type Algorithms } from "ssh2";
+
+/**
+ * Permissive algorithm whitelist. Older Huawei firmware negotiates legacy
+ * primitives (`ssh-dss`, `hmac-md5`, `3des-cbc`, `diffie-hellman-group1-sha1`)
+ * that aren't in ssh2's narrow literal union — we cast once after assembling
+ * the object instead of per-line.
+ */
+const SSH_ALGORITHMS = {
+  kex: [
+    "curve25519-sha256",
+    "curve25519-sha256@libssh.org",
+    "diffie-hellman-group14-sha256",
+    "diffie-hellman-group14-sha1",
+    "diffie-hellman-group-exchange-sha256",
+    "diffie-hellman-group-exchange-sha1",
+    "diffie-hellman-group1-sha1",
+  ],
+  serverHostKey: [
+    "ssh-ed25519",
+    "rsa-sha2-512",
+    "rsa-sha2-256",
+    "ssh-rsa",
+    "ssh-dss",
+  ],
+  cipher: [
+    "aes128-ctr",
+    "aes192-ctr",
+    "aes256-ctr",
+    "aes128-gcm",
+    "aes256-gcm",
+    "aes128-cbc",
+    "aes192-cbc",
+    "aes256-cbc",
+    "3des-cbc",
+  ],
+  hmac: [
+    "hmac-sha2-256",
+    "hmac-sha2-512",
+    "hmac-sha1",
+    "hmac-md5",
+  ],
+} as unknown as Algorithms;
 
 export interface OltCreds {
   host: string;
@@ -138,42 +180,7 @@ export async function connectOlt(creds: OltCreds): Promise<OltSession> {
       username: creds.username,
       password: creds.password,
       readyTimeout: 20000,
-      // Huawei OLTs accept a wide range of older algorithms — be permissive.
-      algorithms: {
-        kex: [
-          "curve25519-sha256",
-          "curve25519-sha256@libssh.org",
-          "diffie-hellman-group14-sha256",
-          "diffie-hellman-group14-sha1",
-          "diffie-hellman-group-exchange-sha256",
-          "diffie-hellman-group-exchange-sha1",
-          "diffie-hellman-group1-sha1",
-        ] as any,
-        serverHostKey: [
-          "ssh-ed25519",
-          "rsa-sha2-512",
-          "rsa-sha2-256",
-          "ssh-rsa",
-          "ssh-dss",
-        ] as any,
-        cipher: [
-          "aes128-ctr",
-          "aes192-ctr",
-          "aes256-ctr",
-          "aes128-gcm",
-          "aes256-gcm",
-          "aes128-cbc",
-          "aes192-cbc",
-          "aes256-cbc",
-          "3des-cbc",
-        ] as any,
-        hmac: [
-          "hmac-sha2-256",
-          "hmac-sha2-512",
-          "hmac-sha1",
-          "hmac-md5",
-        ] as any,
-      },
+      algorithms: SSH_ALGORITHMS,
     });
   });
 

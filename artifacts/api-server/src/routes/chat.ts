@@ -403,10 +403,15 @@ router.post("/chat/stream", requireUser, async (req: Request, res: Response): Pr
     });
   }
 
-  // Build Anthropic message history
+  // Build Anthropic message history. The body schema allows `content` to be
+  // either a plain string or an array of content blocks; both are valid for
+  // `Anthropic.MessageParam.content` so we narrow accordingly.
   const history: Anthropic.MessageParam[] = body.messages.map((m) => ({
     role: m.role,
-    content: typeof m.content === "string" ? m.content : (m.content as any),
+    content:
+      typeof m.content === "string"
+        ? m.content
+        : (m.content as Anthropic.MessageParam["content"]),
   }));
 
   const vendor: Vendor = body.vendor === "huawei-olt" ? "huawei-olt" : "mikrotik";
@@ -457,7 +462,12 @@ router.post("/chat/stream", requireUser, async (req: Request, res: Response): Pr
         }
       }
 
-      history.push({ role: "assistant", content: response.content as any });
+      // `response.content` is the assistant's typed ContentBlock[]; pass it
+      // through as the message content for the next turn.
+      history.push({
+        role: "assistant",
+        content: response.content as Anthropic.MessageParam["content"],
+      });
 
       if (response.stop_reason !== "tool_use" || toolUses.length === 0) {
         sendEvent(res, "done", { stop_reason: response.stop_reason, conversationId });
@@ -466,7 +476,10 @@ router.post("/chat/stream", requireUser, async (req: Request, res: Response): Pr
 
       const toolResults: Anthropic.ToolResultBlockParam[] = [];
       for (const tu of toolUses) {
-        const cmd = String((tu.input as any)?.command ?? "");
+        // `tu.input` is `unknown` from Anthropic's SDK — extract the
+        // `command` field defensively.
+        const input = (tu.input ?? {}) as { command?: unknown };
+        const cmd = typeof input.command === "string" ? input.command : "";
 
         if (tu.name !== expectedToolName) {
           toolResults.push({ type: "tool_result", tool_use_id: tu.id, is_error: true, content: `Unknown tool: ${tu.name}` });

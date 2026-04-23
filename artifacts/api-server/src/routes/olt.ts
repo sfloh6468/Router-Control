@@ -65,12 +65,36 @@ router.post("/olt/connect", async (req, res): Promise<void> => {
 
 // ─────────────────────────── DASHBOARD ───────────────────────────
 
+interface GponPortSummary {
+  port: string;       // "0/0/0"
+  state: string | null;
+}
+
 interface OltDashboard {
   version: string;
   board: string;
   uptime: string | null;
   alarmCount: number | null;
   identity: string | null;
+  gponPorts: GponPortSummary[];
+}
+
+/** Parse `display port state 0` (or `display port info gpon`) into per-port rows. */
+function parseGponPortStates(text: string): GponPortSummary[] {
+  const out: GponPortSummary[] = [];
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    // "  0   online" / "  0/0/0   active   ..." — look for a port column
+    // first then a state token (online/offline/active/inactive/up/down).
+    const m = line.match(
+      /^\s*(\d+(?:\/\d+\/\d+)?)\s+(online|offline|active|inactive|up|down|abnormal)\b/i,
+    );
+    if (m) {
+      const id = m[1].includes("/") ? m[1] : `0/0/${m[1]}`;
+      out.push({ port: id, state: m[2] });
+    }
+  }
+  return out;
 }
 
 router.post("/olt/dashboard", async (req, res): Promise<void> => {
@@ -78,26 +102,33 @@ router.post("/olt/dashboard", async (req, res): Promise<void> => {
   if (!creds) return;
   try {
     const data = await withOlt<OltDashboard>(creds, async (s) => {
-      const [version, board, uptimeOut, alarms, sysname] = await Promise.all([
+      const [version, board, uptimeOut, alarms, sysname, portState] = await Promise.all([
         safeExec(s, "display version"),
         safeExec(s, "display board 0"),
         safeExec(s, "display sysuptime"),
         safeExec(s, "display alarm active"),
         safeExec(s, "display sysname"),
+        safeExec(s, "display port state 0"),
       ]);
       const upMatch = uptimeOut.match(/uptime[^:]*:\s*([^\r\n]+)/i)
         || uptimeOut.match(/up\s+for\s+([^\r\n]+)/i);
       const sysMatch = sysname.match(/(?:Sysname[^:]*:\s*)?([A-Za-z0-9_\-.]+)/);
-      // Count alarm rows — header lines contain "----" or "Total"
       const alarmRows = alarms
         .split("\n")
         .filter((l) => /^\s*\d+\s+/.test(l));
+      let gponPorts = parseGponPortStates(portState);
+      // Fallback: if `display port state 0` wasn't accepted, derive from board.
+      if (gponPorts.length === 0) {
+        const ports = parseGponPorts(board);
+        gponPorts = ports.map((p) => ({ port: p, state: null }));
+      }
       return {
         version: version.trim(),
         board: board.trim(),
         uptime: upMatch ? upMatch[1].trim() : null,
         alarmCount: alarmRows.length,
         identity: sysMatch ? sysMatch[1] : null,
+        gponPorts,
       };
     });
     res.json(data);
@@ -181,7 +212,20 @@ router.post("/olt/onts", async (req, res): Promise<void> => {
           s,
           `display ont info ${frame} ${slot} ${port} all`,
         );
-        all.push(...parseOntInfoBlock(out, p));
+        const rows = parseOntInfoBlock(out, p);
+        // Per-ONT detail call to surface "last down cause" — EA5800 only
+        // includes that field in the per-ONT detail view.
+        for (const row of rows) {
+          const detail = await safeExec(
+            s,
+            `display ont info ${frame} ${slot} ${port} ${row.index}`,
+          );
+          const lc = detail.match(/Last\s+down\s+cause\s*[:=]\s*([^\r\n]+)/i);
+          if (lc) row.lastDownCause = lc[1].trim();
+          const desc = detail.match(/Description\s*[:=]\s*([^\r\n]+)/i);
+          if (desc) row.description = desc[1].trim();
+        }
+        all.push(...rows);
       }
       return all;
     });
@@ -192,28 +236,73 @@ router.post("/olt/onts", async (req, res): Promise<void> => {
 });
 
 const OpticalBody = Creds.extend({
-  port: z.string().regex(/^\d+\/\d+\/\d+$/),
+  ontPort: z.string().regex(/^\d+\/\d+\/\d+$/),
   ontIndex: z.coerce.number().int().nonnegative(),
 });
 
 router.post("/olt/ont/optical", async (req, res): Promise<void> => {
-  const parsed = OpticalBody.safeParse(req.body);
+  // Accept legacy `port` in addition to `ontPort` so the credentials' "port"
+  // field doesn't collide with the GPON port id.
+  const body = { ...req.body, ontPort: req.body?.ontPort ?? req.body?.gponPort };
+  const parsed = OpticalBody.safeParse(body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const { host, port, username, password, port: ontPort, ontIndex } = parsed.data as any;
-  const [, f, s, p] = ontPort.match(/^(\d+)\/(\d+)\/(\d+)$/);
+  const d = parsed.data;
+  const m = d.ontPort.match(/^(\d+)\/(\d+)\/(\d+)$/);
+  if (!m) { res.status(400).json({ error: "Invalid ontPort format" }); return; }
+  const [, f, s, p] = m;
   try {
-    const text = await withOlt({ host, port, username, password }, async (sess) => {
-      return await safeExec(
+    const text = await withOlt(
+      { host: d.host, port: d.port, username: d.username, password: d.password },
+      async (sess) => safeExec(
         sess,
-        `display ont optical-info ${f} ${s} ${p} ${ontIndex}`,
-      );
-    });
+        `display ont optical-info ${f} ${s} ${p} ${d.ontIndex}`,
+      ),
+    );
     res.json({ output: text });
   } catch (err) {
     res.status(400).json({ error: errMsg(err) });
+  }
+});
+
+// ─────────────────────────── ONT ACTIONS (provisioning) ───────────────────────────
+
+const OntActionBody = Creds.extend({
+  ontPort: z.string().regex(/^\d+\/\d+\/\d+$/),
+  ontIndex: z.coerce.number().int().nonnegative(),
+  action: z.enum(["activate", "deactivate", "delete"]),
+});
+
+router.post("/olt/ont/action", ...requireWriter(), async (req, res): Promise<void> => {
+  const body = { ...req.body, ontPort: req.body?.ontPort ?? req.body?.gponPort };
+  const parsed = OntActionBody.safeParse(body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const d = parsed.data;
+  const m = d.ontPort.match(/^(\d+)\/(\d+)\/(\d+)$/);
+  if (!m) { res.status(400).json({ error: "Invalid ontPort format" }); return; }
+  const [, f, sl, p] = m;
+  // EA5800 family: ONT lifecycle commands run inside the GPON interface mode.
+  const verb =
+    d.action === "activate" ? "ont activate" :
+    d.action === "deactivate" ? "ont deactivate" :
+    "ont delete";
+  try {
+    const out = await withOlt(
+      { host: d.host, port: d.port, username: d.username, password: d.password },
+      async (sess) => {
+        await sess.exec("config");
+        await sess.exec(`interface gpon ${f}/${sl}`);
+        const r = await sess.exec(`${verb} ${p} ${d.ontIndex}`);
+        await sess.exec("quit");
+        await sess.exec("quit");
+        return r;
+      },
+    );
+    res.json({ output: out, success: true });
+  } catch (err) {
+    res.status(400).json({ success: false, error: errMsg(err) });
   }
 });
 
@@ -280,9 +369,9 @@ router.post("/olt/service-ports", async (req, res): Promise<void> => {
   }
 });
 
-const AddSpBody = Creds.extend({
+const AddSpBody2 = Creds.extend({
   vlan: z.coerce.number().int().min(1).max(4094),
-  port: z.string().regex(/^\d+\/\d+\/\d+$/),
+  gponPort: z.string().regex(/^\d+\/\d+\/\d+$/),
   ontIndex: z.coerce.number().int().nonnegative(),
   gemport: z.coerce.number().int().nonnegative(),
   uservlan: z.coerce.number().int().min(1).max(4094),
@@ -290,16 +379,19 @@ const AddSpBody = Creds.extend({
 });
 
 router.post("/olt/service-port/add", ...requireWriter(), async (req, res): Promise<void> => {
-  const parsed = AddSpBody.safeParse(req.body);
+  // Accept either `gponPort` (preferred — avoids `port` collision with creds.port)
+  // or legacy `port` from earlier callers.
+  const body = { ...req.body, gponPort: req.body?.gponPort ?? req.body?.port };
+  const parsed = AddSpBody2.safeParse(body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
   const d = parsed.data;
   try {
     const out = await withOlt(
-      { host: d.host, port: d.port as any, username: d.username, password: d.password },
+      { host: d.host, port: d.port, username: d.username, password: d.password },
       async (s) => {
         await s.exec("config");
         const cmd =
-          `service-port vlan ${d.vlan} gpon ${d.port} ont ${d.ontIndex} ` +
+          `service-port vlan ${d.vlan} gpon ${d.gponPort} ont ${d.ontIndex} ` +
           `gemport ${d.gemport} multi-service user-vlan ${d.uservlan} ` +
           `inbound traffic-table index ${d.trafficTable} ` +
           `outbound traffic-table index ${d.trafficTable}`;
@@ -324,7 +416,7 @@ router.post("/olt/service-port/delete", ...requireWriter(), async (req, res): Pr
   const d = parsed.data;
   try {
     const out = await withOlt(
-      { host: d.host, port: d.port as any, username: d.username, password: d.password },
+      { host: d.host, port: d.port, username: d.username, password: d.password },
       async (s) => {
         await s.exec("config");
         const r = await s.exec(`undo service-port ${d.index}`);
@@ -401,6 +493,31 @@ router.post("/olt/alarms", async (req, res): Promise<void> => {
   }
 });
 
+const ClearAlarmBody = Creds.extend({
+  alarmId: z.string().min(1).max(64),
+});
+
+router.post("/olt/alarm/clear", ...requireWriter(), async (req, res): Promise<void> => {
+  const parsed = ClearAlarmBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const d = parsed.data;
+  // Reject anything that isn't a numeric / hex alarm id to avoid command
+  // injection through a free-form string in writer-gated context.
+  if (!/^[0-9A-Fa-fxX]+$/.test(d.alarmId)) {
+    res.status(400).json({ error: "Invalid alarm id" });
+    return;
+  }
+  try {
+    const out = await withOlt(
+      { host: d.host, port: d.port, username: d.username, password: d.password },
+      async (s) => s.exec(`clear alarm ${d.alarmId}`),
+    );
+    res.json({ output: out, success: true });
+  } catch (err) {
+    res.status(400).json({ success: false, error: errMsg(err) });
+  }
+});
+
 // ─────────────────────────── COMMAND (terminal) ───────────────────────────
 
 const CommandBody = Creds.extend({
@@ -413,7 +530,7 @@ router.post("/olt/command", ...requireWriter(), async (req, res): Promise<void> 
   const d = parsed.data;
   try {
     const output = await withOlt(
-      { host: d.host, port: d.port as any, username: d.username, password: d.password },
+      { host: d.host, port: d.port, username: d.username, password: d.password },
       async (s) => s.exec(d.command),
     );
     res.json({ output: output || "(no output)", success: true });

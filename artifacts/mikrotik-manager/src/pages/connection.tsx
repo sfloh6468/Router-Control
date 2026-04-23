@@ -6,6 +6,7 @@ import { z } from "zod";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useRouterContext, type Vendor } from "@/lib/router-context";
+import type { RouterCredentials } from "@workspace/api-client-react";
 import { useMikrotikConnect } from "@/hooks/use-mikrotik";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -117,13 +118,17 @@ export default function ConnectionPage() {
       }
 
       if (result.success) {
-        const credsForContext = {
+        // The shared RouterCredentials type carries a `transport` field that
+        // only applies to MikroTik. We build the object from the same shape
+        // and assert via the typed RouterCredentials, which keeps callers
+        // type-safe end-to-end.
+        const credsForContext: RouterCredentials = {
           host: data.host,
           port: effectivePort,
           username: data.username,
           password: data.password,
           ...(data.vendor === "mikrotik" ? { transport: data.transport } : {}),
-        } as any;
+        } as RouterCredentials;
 
         // Upsert profile so chat history persists across reconnects.
         let profileId: number | null = null;

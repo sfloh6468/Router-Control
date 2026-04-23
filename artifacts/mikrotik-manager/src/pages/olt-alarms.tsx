@@ -1,8 +1,8 @@
 import React from "react";
-import { AlertOctagon, RefreshCw } from "lucide-react";
+import { AlertOctagon, RefreshCw, X } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { useOltAlarms } from "@/hooks/use-olt";
+import { useOltAlarms, useOltClearAlarm } from "@/hooks/use-olt";
 
 function SeverityBadge({ severity }: { severity: string | null }) {
   if (!severity) return <span className="text-muted-foreground">—</span>;
@@ -21,7 +21,13 @@ function SeverityBadge({ severity }: { severity: string | null }) {
 
 export default function OltAlarmsPage() {
   const q = useOltAlarms();
+  const clear = useOltClearAlarm();
   const alarms = q.data?.alarms ?? [];
+
+  const onClear = (id: string) => {
+    if (!window.confirm(`Clear alarm ${id}? This runs \`clear alarm ${id}\` on the OLT.`)) return;
+    clear.mutate(id);
+  };
 
   return (
     <div className="space-y-6">
@@ -47,6 +53,12 @@ export default function OltAlarmsPage() {
         </Card>
       )}
 
+      {clear.isError && (
+        <Card className="p-4 border-destructive/40 bg-destructive/10 text-destructive text-sm">
+          Clear failed: {clear.error instanceof Error ? clear.error.message : "Unknown error"}
+        </Card>
+      )}
+
       <Card className="p-0 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -56,14 +68,15 @@ export default function OltAlarmsPage() {
                 <th className="px-3 py-2 text-left">Severity</th>
                 <th className="px-3 py-2 text-left">Occurred</th>
                 <th className="px-3 py-2 text-left">Description</th>
+                <th className="px-3 py-2 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {q.isLoading && (
-                <tr><td colSpan={4} className="px-3 py-6 text-center text-muted-foreground">Loading…</td></tr>
+                <tr><td colSpan={5} className="px-3 py-6 text-center text-muted-foreground">Loading…</td></tr>
               )}
               {!q.isLoading && alarms.length === 0 && (
-                <tr><td colSpan={4} className="px-3 py-6 text-center text-success">✓ No active alarms.</td></tr>
+                <tr><td colSpan={5} className="px-3 py-6 text-center text-success">✓ No active alarms.</td></tr>
               )}
               {alarms.map((a, i) => (
                 <tr key={`${a.id}-${i}`} className="border-t border-border/40 hover:bg-accent/30">
@@ -71,6 +84,16 @@ export default function OltAlarmsPage() {
                   <td className="px-3 py-2"><SeverityBadge severity={a.severity} /></td>
                   <td className="px-3 py-2 font-mono text-xs">{a.occurredAt ?? "—"}</td>
                   <td className="px-3 py-2 text-xs">{a.description || "—"}</td>
+                  <td className="px-3 py-2 text-right">
+                    <button
+                      onClick={() => onClear(a.id)}
+                      disabled={clear.isPending}
+                      className="inline-flex items-center gap-1 text-xs text-destructive hover:underline disabled:opacity-40"
+                      title={`clear alarm ${a.id}`}
+                    >
+                      <X className="h-3 w-3" /> Clear
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
