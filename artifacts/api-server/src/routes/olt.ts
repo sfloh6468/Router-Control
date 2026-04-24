@@ -1095,51 +1095,161 @@ function parseOnlineUsers(text: string): OltUserSession[] {
 }
 
 /**
- * Parse `display security log`. EA5800 firmware prints free-form log
- * lines; we look for any line that mentions a Login/Logout event with a
- * recognisable timestamp + username + (optional) ip. We're intentionally
- * loose because the exact wording varies between firmwares.
+ * One raw event extracted from `display security log`. The log is
+ * line-oriented (one event per line) and we correlate login/logout
+ * events into sessions in a second pass.
+ */
+interface RawSecurityEvent {
+  kind: "login" | "logout" | "fail";
+  at: string;        // raw timestamp string from the device
+  username: string;
+  sourceIp: string | null;
+  channel: string | null;
+}
+
+/** Parse a single security-log line into a RawSecurityEvent, or null. */
+function parseSecurityLine(line: string): RawSecurityEvent | null {
+  if (!line) return null;
+  if (/^[-=]+$/.test(line)) return null;
+  if (/^(?:Total|---- More|Press|Index)/i.test(line)) return null;
+  const evt = line.match(/\b(login\s*fail(?:ed|ure)?|login|logout|kick(?:ed)?(?:[-\s]?off)?)\b/i);
+  if (!evt) return null;
+  const tsMatch = line.match(/(\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)/);
+  if (!tsMatch) return null;
+  let name: string | null = null;
+  const named = line.match(/\buser(?:[-\s]?name)?\s*[:=]?\s*([A-Za-z0-9_\-.]{1,32})/i);
+  if (named) name = named[1];
+  else {
+    const q = line.match(/'([A-Za-z0-9_\-.]{1,32})'|"([A-Za-z0-9_\-.]{1,32})"/);
+    if (q) name = q[1] ?? q[2] ?? null;
+  }
+  if (!name) return null;
+  const ipMatch = line.match(/((?:\d{1,3}\.){3}\d{1,3}(?::\d+)?)/);
+  const channel = (line.match(/\b(ssh|telnet|console|web|http|https|ftp|snmp)\b/i) || [])[1] ?? null;
+  const kind: RawSecurityEvent["kind"] = /fail/i.test(evt[1])
+    ? "fail"
+    : /logout|kick/i.test(evt[1])
+    ? "logout"
+    : "login";
+  return {
+    kind,
+    at: tsMatch[1],
+    username: name,
+    sourceIp: ipMatch ? ipMatch[1] : null,
+    channel: channel ? channel.toLowerCase() : null,
+  };
+}
+
+/**
+ * Parse `display security log`, correlating each login event with the
+ * matching subsequent logout/kick to produce session rows that have both
+ * `loginAt` and `logoutAt` populated.
+ *
+ * Pairing rules (in priority order, all chronological):
+ *   1) Same username + same source IP + same channel
+ *   2) Same username + same source IP
+ *   3) Same username
+ *
+ * A login with no matching logout becomes an "open" historical row
+ * (logoutAt: null) — it is later de-duped against the live `display
+ * online user` list by the caller. Failed logins are always standalone
+ * rows (loginAt set, logoutAt null, result "fail").
  */
 function parseSecurityLog(text: string): OltUserSession[] {
-  const out: OltUserSession[] = [];
-  let row = 0;
+  const events: RawSecurityEvent[] = [];
   for (const raw of text.split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-    // Skip headers & paginator chrome.
-    if (/^[-=]+$/.test(line)) continue;
-    if (/^(?:Total|---- More|Press|Index)/i.test(line)) continue;
-    const evt = line.match(/\b(login\s*fail(?:ed|ure)?|login|logout|kick(?:ed)?(?:[-\s]?off)?)\b/i);
-    if (!evt) continue;
-    const tsMatch = line.match(/(\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)/);
-    const ipMatch = line.match(/((?:\d{1,3}\.){3}\d{1,3}(?::\d+)?)/);
-    // Username lookups: "user=X", "user-name X", or a bare token after "user"
-    let name: string | null = null;
-    const named = line.match(/\buser(?:[-\s]?name)?\s*[:=]?\s*([A-Za-z0-9_\-.]{1,32})/i);
-    if (named) name = named[1];
-    else {
-      // Fall back to any quoted name.
-      const q = line.match(/'([A-Za-z0-9_\-.]{1,32})'|"([A-Za-z0-9_\-.]{1,32})"/);
-      if (q) name = q[1] ?? q[2] ?? null;
+    const ev = parseSecurityLine(raw.trim());
+    if (ev) events.push(ev);
+  }
+  // The OLT prints oldest → newest; rely on that ordering for pairing.
+  // Maintain a per-key queue of unmatched logins.
+  const open: Array<RawSecurityEvent & { _idx: number }> = [];
+  const sessions: OltUserSession[] = [];
+  let row = 0;
+  const matchScore = (
+    login: RawSecurityEvent,
+    logout: RawSecurityEvent,
+  ): number => {
+    if (login.username !== logout.username) return -1;
+    let s = 1;
+    if (login.sourceIp && logout.sourceIp && login.sourceIp === logout.sourceIp) s += 2;
+    if (login.channel && logout.channel && login.channel === logout.channel) s += 1;
+    return s;
+  };
+  for (const ev of events) {
+    if (ev.kind === "fail") {
+      sessions.push({
+        id: `log:${row++}`,
+        username: ev.username,
+        sourceIp: ev.sourceIp,
+        loginAt: ev.at,
+        logoutAt: null,
+        channel: ev.channel,
+        result: "fail",
+        active: false,
+        kickHandle: null,
+      });
+      continue;
     }
-    if (!name) continue;
-    const channel = (line.match(/\b(ssh|telnet|console|web|http|https|ftp|snmp)\b/i) || [])[1] ?? null;
-    const isLogout = /logout|kick/i.test(evt[1]);
-    const isFail = /fail/i.test(evt[1]);
-    out.push({
-      id: `log:${row}`,
-      username: name,
-      sourceIp: ipMatch ? ipMatch[1] : null,
-      loginAt: !isLogout && tsMatch ? tsMatch[1] : null,
-      logoutAt: isLogout && tsMatch ? tsMatch[1] : null,
-      channel: channel ? channel.toLowerCase() : null,
-      result: isFail ? "fail" : "success",
+    if (ev.kind === "login") {
+      open.push({ ...ev, _idx: open.length });
+      continue;
+    }
+    // logout/kick: find the best (highest score, most recent) open login.
+    let bestI = -1;
+    let bestScore = 0;
+    for (let i = open.length - 1; i >= 0; i--) {
+      const score = matchScore(open[i], ev);
+      if (score > bestScore) {
+        bestScore = score;
+        bestI = i;
+      }
+    }
+    if (bestI === -1) {
+      // Orphan logout — record it on its own so admins still see it.
+      sessions.push({
+        id: `log:${row++}`,
+        username: ev.username,
+        sourceIp: ev.sourceIp,
+        loginAt: null,
+        logoutAt: ev.at,
+        channel: ev.channel,
+        result: "success",
+        active: false,
+        kickHandle: null,
+      });
+      continue;
+    }
+    const login = open[bestI];
+    open.splice(bestI, 1);
+    sessions.push({
+      id: `log:${row++}`,
+      username: login.username,
+      sourceIp: login.sourceIp ?? ev.sourceIp,
+      loginAt: login.at,
+      logoutAt: ev.at,
+      channel: login.channel ?? ev.channel,
+      result: "success",
       active: false,
       kickHandle: null,
     });
-    row += 1;
   }
-  return out;
+  // Any remaining unmatched logins become open historical rows. The
+  // caller will drop them if a matching active session exists.
+  for (const login of open) {
+    sessions.push({
+      id: `log:${row++}`,
+      username: login.username,
+      sourceIp: login.sourceIp,
+      loginAt: login.at,
+      logoutAt: null,
+      channel: login.channel,
+      result: "success",
+      active: false,
+      kickHandle: null,
+    });
+  }
+  return sessions;
 }
 
 router.post("/olt/user-logins", async (req, res): Promise<void> => {
