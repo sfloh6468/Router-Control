@@ -17,6 +17,7 @@ import {
   AlertOctagon,
   Plug,
   Users,
+  Archive,
 } from "lucide-react";
 import { useClerk, useUser, Show } from "@clerk/react";
 import { useRouterContext } from "@/lib/router-context";
@@ -42,6 +43,7 @@ const oltNav = [
   { name: "Service Ports", href: "/service-ports", icon: Plug },
   { name: "Alarms", href: "/alarms", icon: AlertOctagon },
   { name: "OLT Users", href: "/olt-users", icon: Users },
+  { name: "Snapshots", href: "/snapshots", icon: Archive },
   { name: "Terminal", href: "/terminal", icon: TerminalSquare },
 ];
 
@@ -49,14 +51,49 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const { isConnected, credentials, meta, setCredentials, vendor } = useRouterContext();
   const isOlt = vendor === "huawei-olt";
-  const navItems = isOlt ? oltNav : mikrotikNav;
+  let navItems = isOlt ? oltNav : mikrotikNav;
   const vendorLabel = isOlt ? "Huawei OLT" : "MikroTik";
   const { user } = useUser();
   const { signOut } = useClerk();
   const [exporting, setExporting] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
   const [chatOpen, setChatOpen] = useState(true);
   const me = useMe();
   const isSuper = me.data?.isSuper === true;
+  const canWrite = me.data?.canWrite === true;
+  if (isOlt && !canWrite) {
+    navItems = navItems.filter((n) => n.href !== "/snapshots");
+  }
+
+  const handleBackupOlt = async () => {
+    if (!credentials || !isOlt) return;
+    setBackingUp(true);
+    const tid = toast.loading("Saving config & downloading snapshot…");
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL.replace(/\/$/, "")}/api/olt/backup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      const blob = new Blob([data.config ?? ""], { type: "text/plain" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = data.filename ?? `olt-${meta.identity ?? credentials.host}.cfg`;
+      a.click();
+      URL.revokeObjectURL(url);
+      const archived = data.stored ? " — snapshot archived" : data.storageConfigured ? "" : " (archive disabled)";
+      toast.success(`Backup downloaded${archived}`, { id: tid });
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : "Backup failed", { id: tid });
+    } finally {
+      setBackingUp(false);
+    }
+  };
 
   const handleExport = async () => {
     if (!credentials || isOlt) return;
@@ -211,6 +248,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
             >
               {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
               {exporting ? "Exporting…" : "Download Config"}
+            </button>
+          )}
+          {isOlt && canWrite && (
+            <button
+              onClick={handleBackupOlt}
+              disabled={backingUp}
+              className="flex items-center gap-3 px-3 py-2.5 w-full rounded-lg text-sm font-medium text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors disabled:opacity-50"
+              title="Run `save` on the OLT and download the running config"
+            >
+              {backingUp ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+              {backingUp ? "Backing up…" : "Backup OLT Config"}
             </button>
           )}
           <button

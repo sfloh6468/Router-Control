@@ -1043,6 +1043,312 @@ router.post("/olt/command", ...requireWriter(), async (req, res): Promise<void> 
   }
 });
 
+// ─────────────────────────── BACKUP / CONFIG SNAPSHOTS ───────────────────────────
+//
+// EA5800-family OLTs persist their running config to flash with `save` and
+// can dump the live config text via `display current-configuration`. This
+// route does both: it commits to flash, captures the config text over the
+// existing SSH shell, and (when object storage is configured) archives a
+// timestamped copy under the caller's userId so historical snapshots are
+// listable and downloadable from the UI.
+
+const BackupBody = Creds.extend({
+  store: z.boolean().optional(), // when true (default) upload to object storage if configured
+});
+
+interface SnapshotMeta {
+  id: string;          // object name *within* the snapshots prefix (URL-safe)
+  identity: string | null;
+  host: string;
+  filename: string;
+  size: number;
+  createdAt: string;   // ISO
+}
+
+function snapshotsPrefix(userId: string): string {
+  let dir = process.env.PRIVATE_OBJECT_DIR || "";
+  if (!dir) return "";
+  if (!dir.endsWith("/")) dir += "/";
+  return `${dir}olt-snapshots/${userId}/`;
+}
+
+function safeIdentForFilename(s: string | null | undefined): string {
+  return (s || "olt").replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 64);
+}
+
+function isStorageConfigured(): boolean {
+  return Boolean(
+    process.env.PRIVATE_OBJECT_DIR && process.env.DEFAULT_OBJECT_STORAGE_BUCKET_ID,
+  );
+}
+
+async function captureConfig(s: OltSession): Promise<{ saveOutput: string; config: string }> {
+  // `save` prompts "Are you sure ... (y/n)" on EA5800. Send y to confirm.
+  const saveOutput = await s.execScript(["save", "y"], { timeoutMs: 60000 });
+  // Pull the live running config. Output can be tens of KB; allow plenty of time.
+  const config = await s.exec("display current-configuration", { timeoutMs: 120000 });
+  return { saveOutput, config };
+}
+
+router.post("/olt/backup", ...requireWriter(), async (req, res): Promise<void> => {
+  const parsed = BackupBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const d = parsed.data;
+  const userId = req.userId;
+  const wantStore = d.store !== false;
+
+  try {
+    const { saveOutput, config, identity } = await withOlt(
+      { host: d.host, port: d.port, username: d.username, password: d.password },
+      async (s) => {
+        const probe = await probeOltIdentity(s);
+        const cap = await captureConfig(s);
+        return { ...cap, identity: probe.identity };
+      },
+    );
+
+    const ts = new Date();
+    const tsCompact = ts.toISOString().replace(/[:.]/g, "-");
+    const filename = `${safeIdentForFilename(identity ?? d.host)}-${tsCompact}.cfg`;
+
+    let stored: { id: string; path: string } | null = null;
+    if (wantStore && userId && isStorageConfigured()) {
+      try {
+        const { objectStorageClient } = await import("../lib/objectStorage");
+        const prefix = snapshotsPrefix(userId);
+        // prefix looks like "/<bucket>/.private/olt-snapshots/<uid>/"
+        const trimmed = prefix.startsWith("/") ? prefix.slice(1) : prefix;
+        const slash = trimmed.indexOf("/");
+        const bucketName = trimmed.slice(0, slash);
+        const objectName = trimmed.slice(slash + 1) + filename;
+        const bucket = objectStorageClient.bucket(bucketName);
+        await bucket.file(objectName).save(Buffer.from(config, "utf-8"), {
+          contentType: "text/plain; charset=utf-8",
+          resumable: false,
+          metadata: {
+            metadata: {
+              identity: identity ?? "",
+              host: d.host,
+              userId,
+              createdAt: ts.toISOString(),
+            },
+          },
+        });
+        stored = { id: encodeURIComponent(filename), path: `${prefix}${filename}` };
+      } catch (storeErr) {
+        // Don't fail the download if archival fails — just surface the warning.
+        console.warn("[olt] snapshot store failed:", storeErr);
+      }
+    }
+
+    res.json({
+      success: true,
+      filename,
+      identity: identity ?? null,
+      host: d.host,
+      saveOutput,
+      config,
+      stored,
+      storageConfigured: isStorageConfigured(),
+    });
+  } catch (err) {
+    res.status(400).json({ success: false, error: errMsg(err) });
+  }
+});
+
+router.get("/olt/snapshots", ...requireWriter(), async (req, res): Promise<void> => {
+  const userId = req.userId;
+  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  if (!isStorageConfigured()) {
+    res.json({ configured: false, snapshots: [] });
+    return;
+  }
+  try {
+    const { objectStorageClient } = await import("../lib/objectStorage");
+    const prefix = snapshotsPrefix(userId);
+    const trimmed = prefix.startsWith("/") ? prefix.slice(1) : prefix;
+    const slash = trimmed.indexOf("/");
+    const bucketName = trimmed.slice(0, slash);
+    const objectPrefix = trimmed.slice(slash + 1);
+    const bucket = objectStorageClient.bucket(bucketName);
+    const [files] = await bucket.getFiles({ prefix: objectPrefix });
+    const snapshots: SnapshotMeta[] = files.map((f) => {
+      const name = f.name.slice(objectPrefix.length);
+      const md = (f.metadata?.metadata ?? {}) as Record<string, string>;
+      const sizeRaw = (f.metadata as { size?: string | number } | undefined)?.size;
+      const size = typeof sizeRaw === "string" ? parseInt(sizeRaw, 10) : (sizeRaw ?? 0);
+      const created = (f.metadata as { timeCreated?: string } | undefined)?.timeCreated;
+      return {
+        id: encodeURIComponent(name),
+        identity: md.identity || null,
+        host: md.host || "",
+        filename: name,
+        size: Number.isFinite(size) ? size : 0,
+        createdAt: md.createdAt || created || new Date(0).toISOString(),
+      };
+    }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    res.json({ configured: true, snapshots });
+  } catch (err) {
+    res.status(500).json({ error: errMsg(err) });
+  }
+});
+
+function decodeSnapshotId(idRaw: string): string | null {
+  if (!idRaw) return null;
+  let filename: string;
+  try { filename = decodeURIComponent(idRaw); } catch { return null; }
+  if (filename.includes("/") || filename.includes("..") || filename.length > 256) return null;
+  return filename;
+}
+
+router.get("/olt/snapshots/download", ...requireWriter(), async (req, res): Promise<void> => {
+  const userId = req.userId;
+  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  if (!isStorageConfigured()) { res.status(404).json({ error: "Object storage not configured" }); return; }
+  const idRaw = typeof req.query.id === "string" ? req.query.id : "";
+  const filename = decodeSnapshotId(idRaw);
+  if (!filename) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const { objectStorageClient } = await import("../lib/objectStorage");
+    const prefix = snapshotsPrefix(userId);
+    const trimmed = prefix.startsWith("/") ? prefix.slice(1) : prefix;
+    const slash = trimmed.indexOf("/");
+    const bucketName = trimmed.slice(0, slash);
+    const objectName = trimmed.slice(slash + 1) + filename;
+    const bucket = objectStorageClient.bucket(bucketName);
+    const file = bucket.file(objectName);
+    const [exists] = await file.exists();
+    if (!exists) { res.status(404).json({ error: "Snapshot not found" }); return; }
+    const [buf] = await file.download();
+    res.setHeader("Content-Type", "text/plain; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.send(buf);
+  } catch (err) {
+    res.status(500).json({ error: errMsg(err) });
+  }
+});
+
+router.delete("/olt/snapshots", ...requireWriter(), async (req, res): Promise<void> => {
+  const userId = req.userId;
+  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  if (!isStorageConfigured()) { res.status(404).json({ error: "Object storage not configured" }); return; }
+  const idRaw = typeof req.query.id === "string" ? req.query.id : "";
+  const filename = decodeSnapshotId(idRaw);
+  if (!filename) { res.status(400).json({ error: "Invalid id" }); return; }
+  try {
+    const { objectStorageClient } = await import("../lib/objectStorage");
+    const prefix = snapshotsPrefix(userId);
+    const trimmed = prefix.startsWith("/") ? prefix.slice(1) : prefix;
+    const slash = trimmed.indexOf("/");
+    const bucketName = trimmed.slice(0, slash);
+    const objectName = trimmed.slice(slash + 1) + filename;
+    await objectStorageClient.bucket(bucketName).file(objectName).delete({ ignoreNotFound: true });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ success: false, error: errMsg(err) });
+  }
+});
+
+// Apply a previously captured config (or arbitrary text) to the OLT by
+// replaying its lines in `config` mode. SmartAX has no "load saved-file
+// over SSH" path, so we issue the saved CLI commands one at a time and
+// surface any failure tokens. The route accepts either an archived
+// snapshot id (resolved against the caller's storage prefix) or an
+// inline `config` string for ad-hoc restores.
+const RestoreBody = Creds.extend({
+  snapshotId: z.string().min(1).max(256).optional(),
+  config: z.string().min(1).max(2_000_000).optional(),
+}).refine((d) => d.snapshotId || d.config, {
+  message: "Provide snapshotId or config",
+});
+
+const SKIP_LINE = /^(\s*$|#|!|<.*>|\s*display\b|\s*Building configuration|\s*Saving|\s*Press|\s*Are you sure|\s*\[Y\/N\])/i;
+const FAIL_TOKEN = /(failure|failed|invalid|denied|unrecognized|incomplete|ambiguous|error\b)/i;
+
+router.post("/olt/restore", ...requireWriter(), async (req, res): Promise<void> => {
+  const parsed = RestoreBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const d = parsed.data;
+  const userId = req.userId;
+
+  let configText = d.config ?? "";
+  if (!configText && d.snapshotId) {
+    if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+    if (!isStorageConfigured()) { res.status(400).json({ error: "Object storage not configured" }); return; }
+    const filename = decodeSnapshotId(d.snapshotId);
+    if (!filename) { res.status(400).json({ error: "Invalid snapshotId" }); return; }
+    try {
+      const { objectStorageClient } = await import("../lib/objectStorage");
+      const prefix = snapshotsPrefix(userId);
+      const trimmed = prefix.startsWith("/") ? prefix.slice(1) : prefix;
+      const slash = trimmed.indexOf("/");
+      const bucketName = trimmed.slice(0, slash);
+      const objectName = trimmed.slice(slash + 1) + filename;
+      const file = objectStorageClient.bucket(bucketName).file(objectName);
+      const [exists] = await file.exists();
+      if (!exists) { res.status(404).json({ error: "Snapshot not found" }); return; }
+      const [buf] = await file.download();
+      configText = buf.toString("utf-8");
+    } catch (err) {
+      res.status(500).json({ error: errMsg(err) }); return;
+    }
+  }
+
+  // Filter the config into a list of replayable command lines.
+  const lines = configText
+    .split(/\r?\n/)
+    .map((l) => l.replace(/[ \t]+$/g, ""))
+    .filter((l) => !SKIP_LINE.test(l));
+
+  if (lines.length === 0) {
+    res.status(400).json({ error: "Snapshot has no replayable commands" }); return;
+  }
+
+  try {
+    const result = await withOlt(
+      { host: d.host, port: d.port, username: d.username, password: d.password },
+      async (s) => {
+        const transcript: string[] = [];
+        const failures: { line: string; output: string }[] = [];
+        await s.exec("config");
+        for (const line of lines) {
+          // Preserve structural commands (quit/return/end). The Huawei
+          // dump uses them to step back out of interface / profile sub-
+          // modes; skipping them would leave us in the wrong context for
+          // the commands that follow.
+          let out = "";
+          try {
+            out = await s.exec(line, { timeoutMs: 30000 });
+          } catch (e) {
+            out = `(exec error: ${e instanceof Error ? e.message : String(e)})`;
+          }
+          transcript.push(`> ${line}\n${out}`);
+          if (FAIL_TOKEN.test(out)) failures.push({ line, output: out });
+        }
+        // Unwind to privileged mode regardless of how deeply nested we
+        // ended up. `return` on VRP / SmartAX exits straight back to
+        // user view from any sub-mode; ignore failure (already there).
+        try { await s.exec("return", { timeoutMs: 5000 }); } catch { /* ignore */ }
+        // Persist the new running config and treat a failing save as a
+        // failed restore overall.
+        const saveOutput = await s.execScript(["save", "y"], { timeoutMs: 60000 });
+        const saveOk = !FAIL_TOKEN.test(saveOutput);
+        return {
+          appliedLines: lines.length,
+          failureCount: failures.length,
+          failures,
+          transcript: transcript.join("\n"),
+          saveOutput,
+          saveOk,
+        };
+      },
+    );
+    res.json({ success: result.failureCount === 0 && result.saveOk, ...result });
+  } catch (err) {
+    res.status(400).json({ success: false, error: errMsg(err) });
+  }
+});
+
 // ─────────────────────────── helpers ───────────────────────────
 
 async function safeExec(s: OltSession, cmd: string): Promise<string> {

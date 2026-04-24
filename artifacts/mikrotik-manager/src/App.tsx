@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { RouterProvider, useRouterContext } from "@/lib/router-context";
 import { ChatProvider } from "@/lib/chat-context";
 import { Layout } from "@/components/layout";
+import { useMe } from "@/hooks/use-admin";
 
 // Pages
 import NotFound from "@/pages/not-found";
@@ -24,6 +25,7 @@ import OltOntsPage from "@/pages/olt-onts";
 import OltServicePortsPage from "@/pages/olt-service-ports";
 import OltAlarmsPage from "@/pages/olt-alarms";
 import OltUsersPage from "@/pages/olt-users";
+import OltSnapshotsPage from "@/pages/olt-snapshots";
 
 const queryClient = new QueryClient();
 
@@ -118,6 +120,15 @@ function ProtectedRoute({ component: Component }: { component: React.ComponentTy
   return <Component />;
 }
 
+function WriterRoute({ component: Component }: { component: React.ComponentType }) {
+  const { isConnected } = useRouterContext();
+  const me = useMe();
+  if (!isConnected) return <Redirect to="/" />;
+  if (me.isLoading) return null;
+  if (me.data?.canWrite !== true) return <Redirect to="/dashboard" />;
+  return <Component />;
+}
+
 function AppRoutes() {
   const { isConnected, vendor } = useRouterContext();
   const isOlt = vendor === "huawei-olt";
@@ -135,6 +146,7 @@ function AppRoutes() {
             <Route path="/service-ports"><ProtectedRoute component={OltServicePortsPage} /></Route>
             <Route path="/alarms"><ProtectedRoute component={OltAlarmsPage} /></Route>
             <Route path="/olt-users"><ProtectedRoute component={OltUsersPage} /></Route>
+            <Route path="/snapshots"><WriterRoute component={OltSnapshotsPage} /></Route>
             {/* Block MikroTik-only paths for OLT sessions by sending them home. */}
             <Route path="/interfaces"><Redirect to="/dashboard" /></Route>
             <Route path="/ip-addresses"><Redirect to="/dashboard" /></Route>
@@ -155,6 +167,7 @@ function AppRoutes() {
             <Route path="/service-ports"><Redirect to="/dashboard" /></Route>
             <Route path="/alarms"><Redirect to="/dashboard" /></Route>
             <Route path="/olt-users"><Redirect to="/dashboard" /></Route>
+            <Route path="/snapshots"><Redirect to="/dashboard" /></Route>
           </>
         )}
 
