@@ -1022,6 +1022,192 @@ router.post("/olt/password-policy/set", ...requireWriter(), async (req, res): Pr
   }
 });
 
+// ─────────────────────────── USER LOGIN HISTORY ───────────────────────────
+
+interface OltUserSession {
+  /** stable id for React keys: "active:<idx>" or "log:<row#>" */
+  id: string;
+  username: string;
+  sourceIp: string | null;
+  loginAt: string | null;
+  logoutAt: string | null;
+  /** ssh / telnet / console / web / etc. */
+  channel: string | null;
+  /** success / fail / null (null = unknown / current) */
+  result: string | null;
+  /** true if this row represents a currently-online session */
+  active: boolean;
+  /** opaque handle the OLT understands for `kick off user` (e.g. user-index) */
+  kickHandle: string | null;
+}
+
+/**
+ * Parse `display online user`. EA5800 V100R019 prints something like:
+ *
+ *   User-Index   User-Name        User-Type   User-Level     Login-Time            Login-From
+ *   ------------------------------------------------------------------------------------------
+ *   0            root             SSH         Administrator  2024-04-15 10:23:45   192.168.1.5
+ *   1            admin            Telnet      Operator       2024-04-16 09:11:02   10.0.0.7
+ *
+ * Column ordering varies by firmware so we look for the four anchors we
+ * need (name, type, time-stamp-ish token, ip-ish token) per line and don't
+ * depend on a fixed column layout.
+ */
+function parseOnlineUsers(text: string): OltUserSession[] {
+  const out: OltUserSession[] = [];
+  let row = 0;
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    if (!line || /^[-=\s]+$/.test(line)) continue;
+    if (/^\s*User[-\s]?Index\b|^\s*Index\s+User|^\s*User[-\s]?Name\s+(?:User[-\s]?Type|Login)/i.test(line)) continue;
+    // Skip totals like "Total: 2"
+    if (/^\s*Total\b/i.test(line)) continue;
+    // Pull the timestamp (login time) so we don't mistake it for an IP token.
+    const tsMatch = line.match(/(\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)/);
+    const ipMatch = line.match(/((?:\d{1,3}\.){3}\d{1,3}(?::\d+)?|[0-9a-f:]+::?[0-9a-f:]+)/i);
+    // Channel/type tokens we expect on this line.
+    const chanMatch = line.match(/\b(ssh|telnet|console|web|http|https|ftp|snmp)\b/i);
+    // First whitespace-separated columns: index?, name
+    const cols = line.split(/\s+/).filter(Boolean);
+    if (cols.length < 2) continue;
+    let idx: string | null = null;
+    let nameIdx = 0;
+    if (/^\d+$/.test(cols[0])) {
+      idx = cols[0];
+      nameIdx = 1;
+    }
+    const name = cols[nameIdx];
+    if (!name || !/^[A-Za-z0-9_\-.]{1,32}$/.test(name)) continue;
+    out.push({
+      id: `active:${idx ?? row}`,
+      username: name,
+      sourceIp: ipMatch ? ipMatch[1] : null,
+      loginAt: tsMatch ? tsMatch[1] : null,
+      logoutAt: null,
+      channel: chanMatch ? chanMatch[1].toLowerCase() : null,
+      result: null,
+      active: true,
+      kickHandle: idx,
+    });
+    row += 1;
+  }
+  return out;
+}
+
+/**
+ * Parse `display security log`. EA5800 firmware prints free-form log
+ * lines; we look for any line that mentions a Login/Logout event with a
+ * recognisable timestamp + username + (optional) ip. We're intentionally
+ * loose because the exact wording varies between firmwares.
+ */
+function parseSecurityLog(text: string): OltUserSession[] {
+  const out: OltUserSession[] = [];
+  let row = 0;
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    // Skip headers & paginator chrome.
+    if (/^[-=]+$/.test(line)) continue;
+    if (/^(?:Total|---- More|Press|Index)/i.test(line)) continue;
+    const evt = line.match(/\b(login\s*fail(?:ed|ure)?|login|logout|kick(?:ed)?(?:[-\s]?off)?)\b/i);
+    if (!evt) continue;
+    const tsMatch = line.match(/(\d{4}-\d{1,2}-\d{1,2}[ T]\d{1,2}:\d{2}(?::\d{2})?)/);
+    const ipMatch = line.match(/((?:\d{1,3}\.){3}\d{1,3}(?::\d+)?)/);
+    // Username lookups: "user=X", "user-name X", or a bare token after "user"
+    let name: string | null = null;
+    const named = line.match(/\buser(?:[-\s]?name)?\s*[:=]?\s*([A-Za-z0-9_\-.]{1,32})/i);
+    if (named) name = named[1];
+    else {
+      // Fall back to any quoted name.
+      const q = line.match(/'([A-Za-z0-9_\-.]{1,32})'|"([A-Za-z0-9_\-.]{1,32})"/);
+      if (q) name = q[1] ?? q[2] ?? null;
+    }
+    if (!name) continue;
+    const channel = (line.match(/\b(ssh|telnet|console|web|http|https|ftp|snmp)\b/i) || [])[1] ?? null;
+    const isLogout = /logout|kick/i.test(evt[1]);
+    const isFail = /fail/i.test(evt[1]);
+    out.push({
+      id: `log:${row}`,
+      username: name,
+      sourceIp: ipMatch ? ipMatch[1] : null,
+      loginAt: !isLogout && tsMatch ? tsMatch[1] : null,
+      logoutAt: isLogout && tsMatch ? tsMatch[1] : null,
+      channel: channel ? channel.toLowerCase() : null,
+      result: isFail ? "fail" : "success",
+      active: false,
+      kickHandle: null,
+    });
+    row += 1;
+  }
+  return out;
+}
+
+router.post("/olt/user-logins", async (req, res): Promise<void> => {
+  const creds = parseCreds(req, res);
+  if (!creds) return;
+  try {
+    const data = await withOlt(creds, async (s) => {
+      // Both display commands are read-only and run from user view.
+      const [onlineRaw, logRaw] = await Promise.all([
+        safeExec(s, "display online user"),
+        safeExec(s, "display security log"),
+      ]);
+      // De-dup: if a log row matches an active session (same user + same
+      // login timestamp), prefer the active row so the UI shows it as live
+      // (with a kick button).
+      const active = parseOnlineUsers(onlineRaw);
+      const activeKey = new Set(
+        active.map((a) => `${a.username}|${a.loginAt ?? ""}`),
+      );
+      const history = parseSecurityLog(logRaw).filter(
+        (r) => !activeKey.has(`${r.username}|${r.loginAt ?? ""}`),
+      );
+      return {
+        sessions: [...active, ...history],
+        rawOnline: onlineRaw,
+        rawLog: logRaw,
+      };
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(400).json({ error: errMsg(err) });
+  }
+});
+
+const KickBody = Creds.extend({
+  /** Either username or numeric user-index; both are whitelisted below. */
+  target: z.string().regex(/^[A-Za-z0-9_\-.]{1,32}$/),
+  byIndex: z.boolean().optional(),
+});
+
+router.post("/olt/user-logout", ...requireWriter(), async (req, res): Promise<void> => {
+  const parsed = KickBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const d = parsed.data;
+  try {
+    const result = await withOlt(
+      { host: d.host, port: d.port, username: d.username, password: d.password },
+      async (s) => {
+        // EA5800 V100R019: `kick off user user-name <name>` (or
+        // `user-index <n>`) — runs from user view, no confirmation.
+        const cmd = d.byIndex
+          ? `kick off user user-index ${d.target}`
+          : `kick off user user-name ${d.target}`;
+        const transcript = await s.exec(cmd);
+        const failure = scrapePolicyFailure(transcript);
+        return {
+          output: transcript,
+          error: failure ?? undefined,
+          success: failure === null,
+        };
+      },
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, error: errMsg(err) });
+  }
+});
+
 // ─────────────────────────── COMMAND (terminal) ───────────────────────────
 
 const CommandBody = Creds.extend({

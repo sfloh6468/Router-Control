@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Users, RefreshCw, Plus, Trash2, X, KeyRound, ShieldCheck } from "lucide-react";
+import { Users, RefreshCw, Plus, Trash2, X, KeyRound, ShieldCheck, History, LogOut, Circle } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +10,10 @@ import {
   useOltChangeUserPassword,
   useOltPasswordPolicy,
   useOltSetPasswordPolicy,
+  useOltUserLogins,
+  useOltKickUser,
   type OltUserLevel,
+  type OltUserSession,
 } from "@/hooks/use-olt";
 import { useMe } from "@/hooks/use-admin";
 import { toast } from "sonner";
@@ -46,6 +49,9 @@ export default function OltUsersPage() {
   const delM = useOltDeleteUser();
   const pwM = useOltChangeUserPassword();
   const setPolicyM = useOltSetPasswordPolicy();
+  const loginsQ = useOltUserLogins();
+  const kickM = useOltKickUser();
+  const [confirmKick, setConfirmKick] = useState<string | null>(null);
 
   const [showAdd, setShowAdd] = useState(false);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
@@ -412,6 +418,130 @@ export default function OltUsersPage() {
             </div>
           </div>
         )}
+      </Card>
+
+      <Card className="p-0 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-border/40">
+          <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground flex items-center gap-2">
+            <History className="h-4 w-4" /> Recent logins
+            <span className="text-[11px] font-normal text-muted-foreground/80 normal-case">
+              · display online user · display security log
+            </span>
+          </h2>
+          <Button variant="ghost" size="sm" onClick={() => loginsQ.refetch()} disabled={loginsQ.isFetching}>
+            <RefreshCw className={"h-4 w-4 mr-2 " + (loginsQ.isFetching ? "animate-spin" : "")} />
+            Reload
+          </Button>
+        </div>
+        {loginsQ.isError && (
+          <div className="px-5 py-3 text-sm text-destructive border-b border-destructive/40 bg-destructive/10">
+            {loginsQ.error instanceof Error ? loginsQ.error.message : "Failed to load login history"}
+          </div>
+        )}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-accent/40 text-xs uppercase tracking-wider text-muted-foreground">
+              <tr>
+                <th className="px-3 py-2 text-left">Status</th>
+                <th className="px-3 py-2 text-left">Username</th>
+                <th className="px-3 py-2 text-left">Source IP</th>
+                <th className="px-3 py-2 text-left">Channel</th>
+                <th className="px-3 py-2 text-left">Login</th>
+                <th className="px-3 py-2 text-left">Logout</th>
+                <th className="px-3 py-2 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {loginsQ.isLoading && (
+                <tr><td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">Loading…</td></tr>
+              )}
+              {!loginsQ.isLoading && (loginsQ.data?.sessions ?? []).length === 0 && (
+                <tr><td colSpan={7} className="px-3 py-6 text-center text-muted-foreground">No login history.</td></tr>
+              )}
+              {(loginsQ.data?.sessions ?? []).map((s: OltUserSession) => {
+                const failed = s.result === "fail";
+                return (
+                  <tr
+                    key={s.id}
+                    className={
+                      "border-t border-border/40 hover:bg-accent/30 " +
+                      (s.active ? "bg-emerald-500/5" : "")
+                    }
+                  >
+                    <td className="px-3 py-2">
+                      {s.active ? (
+                        <span className="inline-flex items-center gap-1.5 text-xs font-medium text-emerald-600">
+                          <Circle className="h-2 w-2 fill-emerald-500 text-emerald-500" />
+                          Active
+                        </span>
+                      ) : failed ? (
+                        <span className="inline-flex items-center gap-1.5 text-xs text-destructive">
+                          Failed
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                          Closed
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 font-mono text-xs">{s.username}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{s.sourceIp ?? "—"}</td>
+                    <td className="px-3 py-2 text-xs">{s.channel ?? "—"}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{s.loginAt ?? "—"}</td>
+                    <td className="px-3 py-2 font-mono text-xs">{s.logoutAt ?? "—"}</td>
+                    <td className="px-3 py-2 text-right">
+                      {s.active && canWrite ? (
+                        confirmKick === s.id ? (
+                          <span className="inline-flex items-center gap-2">
+                            <button
+                              onClick={async () => {
+                                try {
+                                  const r = await kickM.mutateAsync(
+                                    s.kickHandle
+                                      ? { target: s.kickHandle, byIndex: true }
+                                      : { target: s.username },
+                                  );
+                                  if (r.success) toast.success(`Logged out ${s.username}`);
+                                  else toast.error(r.error || r.output || "Force-logout failed");
+                                } catch (e) {
+                                  toast.error(e instanceof Error ? e.message : "Force-logout failed");
+                                } finally {
+                                  setConfirmKick(null);
+                                }
+                              }}
+                              disabled={kickM.isPending}
+                              className="text-xs text-destructive hover:underline"
+                            >
+                              Confirm
+                            </button>
+                            <button
+                              onClick={() => setConfirmKick(null)}
+                              className="text-xs text-muted-foreground hover:underline"
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
+                          <button
+                            onClick={() => setConfirmKick(s.id)}
+                            className="inline-flex items-center gap-1 text-xs text-destructive hover:underline"
+                            title="Force log out"
+                          >
+                            <LogOut className="h-3 w-3" /> Log out
+                          </button>
+                        )
+                      ) : s.active && !canWrite ? (
+                        <span className="text-xs text-muted-foreground">read-only</span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </Card>
 
       {usersQ.data?.raw && (

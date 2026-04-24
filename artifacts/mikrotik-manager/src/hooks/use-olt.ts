@@ -312,6 +312,47 @@ export function useOltSetPasswordPolicy() {
   });
 }
 
+// ─────────────────────────── User login history ───────────────────────────
+
+export interface OltUserSession {
+  id: string;
+  username: string;
+  sourceIp: string | null;
+  loginAt: string | null;
+  logoutAt: string | null;
+  channel: string | null;
+  result: string | null;
+  active: boolean;
+  kickHandle: string | null;
+}
+
+export function useOltUserLogins() {
+  const { credentials, vendor } = useRouterContext();
+  return useQuery({
+    queryKey: ["olt", "user-logins", credentials?.host],
+    queryFn: () =>
+      oltPost<{ sessions: OltUserSession[]; rawOnline: string; rawLog: string }>(
+        "/olt/user-logins",
+        credPayload(credentials),
+      ),
+    enabled: !!credentials && vendor === "huawei-olt",
+    refetchInterval: 30000,
+  });
+}
+
+export function useOltKickUser() {
+  const { credentials } = useRouterContext();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: { target: string; byIndex?: boolean }) =>
+      oltPost<{ output: string; success: boolean; error?: string }>(
+        "/olt/user-logout",
+        { ...credPayload(credentials), ...vars },
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["olt", "user-logins"] }),
+  });
+}
+
 export function useOltCommand() {
   const { credentials } = useRouterContext();
   return useMutation({
