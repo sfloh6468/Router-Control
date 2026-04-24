@@ -1272,6 +1272,11 @@ router.post("/olt/user-logins", async (req, res): Promise<void> => {
       const history = parseSecurityLog(logRaw).filter(
         (r) => !activeKey.has(`${r.username}|${r.loginAt ?? ""}`),
       );
+      // Sort history newest-first (using whichever timestamp is present),
+      // then prepend active sessions so live rows always appear at the top.
+      const ts = (r: OltUserSession): string => r.logoutAt ?? r.loginAt ?? "";
+      history.sort((a, b) => ts(b).localeCompare(ts(a)));
+      active.sort((a, b) => (b.loginAt ?? "").localeCompare(a.loginAt ?? ""));
       return {
         sessions: [...active, ...history],
         rawOnline: onlineRaw,
@@ -1288,7 +1293,10 @@ const KickBody = Creds.extend({
   /** Either username or numeric user-index; both are whitelisted below. */
   target: z.string().regex(/^[A-Za-z0-9_\-.]{1,32}$/),
   byIndex: z.boolean().optional(),
-});
+}).refine(
+  (b) => !b.byIndex || /^\d{1,5}$/.test(b.target),
+  { path: ["target"], message: "byIndex requires a numeric user-index target" },
+);
 
 router.post("/olt/user-logout", ...requireWriter(), async (req, res): Promise<void> => {
   const parsed = KickBody.safeParse(req.body);
