@@ -331,22 +331,31 @@ export async function connectOlt(creds: OltCreds): Promise<OltSession> {
           };
 
           const advanceFromBuffer = () => {
-            while (stepIdx < steps.length) {
-              const m = acc.match(steps[stepIdx].when);
-              if (!m || m.index === undefined) break;
-              try {
-                stream.write(steps[stepIdx].send + "\n");
-              } catch (e) {
-                cleanup();
-                reject(e instanceof Error ? e : new Error(String(e)));
-                return;
+            // Try to fire the current step or, if it's missing, jump ahead
+            // to a later step whose prompt the firmware emitted instead.
+            // This makes the helper tolerant of firmware variants that
+            // omit or reorder optional prompts.
+            outer: while (stepIdx < steps.length) {
+              for (let lookahead = stepIdx; lookahead < steps.length; lookahead++) {
+                const m = acc.match(steps[lookahead].when);
+                if (!m || m.index === undefined) continue;
+                try {
+                  stream.write(steps[lookahead].send + "\n");
+                } catch (e) {
+                  cleanup();
+                  reject(e instanceof Error ? e : new Error(String(e)));
+                  return;
+                }
+                completedSteps += 1;
+                stepIdx = lookahead + 1;
+                stepDeadline = Date.now() + stepTimeoutMs;
+                // Drop everything up to and including the matched prompt
+                // so the next iteration sees only newer output.
+                acc = acc.slice(m.index + m[0].length);
+                continue outer;
               }
-              stepIdx += 1;
-              completedSteps += 1;
-              stepDeadline = Date.now() + stepTimeoutMs;
-              // Drop everything up to and including the matched prompt so
-              // the next iteration sees only newer output.
-              acc = acc.slice(m.index + m[0].length);
+              // No remaining step's prompt is present in the buffer yet.
+              break;
             }
             if (stepIdx >= steps.length) allAnswersSent = true;
           };
@@ -361,8 +370,17 @@ export async function connectOlt(creds: OltCreds): Promise<OltSession> {
               acc = acc.replace(MORE_RE, "");
             }
             advanceFromBuffer();
-            if (allAnswersSent && PROMPT_RE.test(acc)) {
-              const failure = scrapeFailure(acc);
+            // The wizard is finished when the regular shell prompt
+            // ("<name>#" / "<name>>") reappears. We resolve regardless of
+            // whether every scripted step fired — if firmware skipped or
+            // reordered a prompt we already jumped ahead via the lookahead
+            // in advanceFromBuffer, and any remaining unfired steps mean
+            // the firmware variant simply doesn't have those prompts.
+            // We require at least one byte of wizard output (transcript
+            // non-empty) so we don't false-trip on stale buffer state from
+            // before the initial command was even echoed back.
+            if (transcript.length > 0 && PROMPT_RE.test(acc)) {
+              const failure = scrapeFailure(transcript);
               finish(failure);
             }
           };
