@@ -892,6 +892,24 @@ router.post("/olt/user/password", ...requireWriter(), async (req, res): Promise<
 
 // ─────────────────────────── PASSWORD POLICY ───────────────────────────
 
+/**
+ * Scrape a Huawei-style failure line from a single CLI command's output.
+ * Mirrors the helper in huawei-olt.ts but is local so we don't have to
+ * re-export it; falls back to null when no error tokens are present.
+ */
+function scrapePolicyFailure(text: string): string | null {
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^(Failure|Error|%)\s*[:.]?\s*\S/i.test(line)) return line;
+    if (/(invalid (?:value|parameter|input)|out of range|denied|unsupported)/i.test(line)) {
+      return line;
+    }
+  }
+  return null;
+}
+
+
 interface PasswordPolicy {
   minLength: number | null;
   agingDays: number | null;
@@ -951,12 +969,29 @@ router.post("/olt/password-policy/set", ...requireWriter(), async (req, res): Pr
       { host: d.host, port: d.port, username: d.username, password: d.password },
       async (s) => {
         await s.exec("config");
+        // Track the first failure across the (potentially) three sub-commands
+        // so we can surface a structured `error` consistent with the other
+        // /olt/user/* routes.
         const outputs: string[] = [];
+        let firstFailure: string | null = null;
+        const recordSubcommand = (label: string, transcript: string) => {
+          outputs.push(`# ${label}\n${transcript}`);
+          if (firstFailure) return;
+          const f = scrapePolicyFailure(transcript);
+          if (f) firstFailure = `${label}: ${f}`;
+        };
+
         if (d.minLength != null) {
-          outputs.push(await s.exec(`terminal user password length ${d.minLength}`));
+          recordSubcommand(
+            `length ${d.minLength}`,
+            await s.exec(`terminal user password length ${d.minLength}`),
+          );
         }
         if (d.agingDays != null) {
-          outputs.push(await s.exec(`terminal user password aging-time ${d.agingDays}`));
+          recordSubcommand(
+            `aging-time ${d.agingDays}`,
+            await s.exec(`terminal user password aging-time ${d.agingDays}`),
+          );
         }
         if (d.modifyMode) {
           // `terminal user password modify-mode <mode>` may prompt
@@ -968,12 +1003,17 @@ router.post("/olt/password-policy/set", ...requireWriter(), async (req, res): Pr
             ],
             { stepTimeoutMs: 4000, totalTimeoutMs: 12000 },
           );
-          outputs.push(wiz.transcript);
+          outputs.push(`# modify-mode ${d.modifyMode}\n${wiz.transcript}`);
+          if (!firstFailure && wiz.failure) {
+            firstFailure = `modify-mode: ${wiz.failure}`;
+          }
         }
         await s.exec("quit");
-        const combined = outputs.join("\n---\n");
-        const failed = /(failure|failed|invalid|error|denied)/i.test(combined);
-        return { output: combined, success: !failed };
+        return {
+          output: outputs.join("\n---\n"),
+          error: firstFailure ?? undefined,
+          success: firstFailure === null,
+        };
       },
     );
     res.json(result);
