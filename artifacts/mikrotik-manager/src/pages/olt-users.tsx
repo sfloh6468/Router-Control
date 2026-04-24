@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Users, RefreshCw, Plus, Trash2, X, KeyRound, ShieldCheck, History, LogOut, Circle, Database, Radio } from "lucide-react";
+import { Users, RefreshCw, Plus, Trash2, X, KeyRound, ShieldCheck, History, LogOut, Circle, Database, Radio, Download } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,12 +14,14 @@ import {
   useOltKickUser,
   useOltLoginHistory,
   useOltPurgeLoginHistory,
+  buildOltLoginHistoryCsvUrl,
   type OltUserLevel,
   type OltUserSession,
   type OltLoginHistoryEvent,
   type OltLoginHistoryFilters,
 } from "@/hooks/use-olt";
 import { useMe } from "@/hooks/use-admin";
+import { useRouterContext } from "@/lib/router-context";
 import { toast } from "sonner";
 
 const LEVELS: OltUserLevel[] = ["common-user", "operator", "administrator"];
@@ -460,6 +462,8 @@ function RecentLoginsCard({
   confirmKick: string | null;
   setConfirmKick: (id: string | null) => void;
 }) {
+  const { credentials } = useRouterContext();
+  const connectedHost = credentials?.host;
   const [view, setView] = useState<"live" | "history">("live");
   const [filters, setFilters] = useState<OltLoginHistoryFilters>({
     from: "",
@@ -601,6 +605,34 @@ function RecentLoginsCard({
                 data-testid="logins-history-apply"
               >
                 Apply filters
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                asChild
+                title="Download the currently filtered history as a CSV file (no row cap up to 100k)"
+                data-testid="logins-history-download-csv"
+              >
+                {/* Real anchor — the backend serves
+                    `Content-Disposition: attachment` with an archival
+                    filename (host + date range), so the browser will
+                    download instead of navigating. We deliberately omit
+                    the `download` HTML attribute because, when present,
+                    Chrome uses its value (empty here) as the filename
+                    and ignores the server-supplied one. */}
+                <a
+                  href={buildOltLoginHistoryCsvUrl({
+                    ...appliedFilters,
+                    // Mirror the GET hook's host fallback: prefer an
+                    // explicit filter, then the staged filter, then the
+                    // currently-connected OLT host. This way the CSV
+                    // always scopes to the device the operator is looking
+                    // at, even before they've clicked "Apply filters".
+                    host: appliedFilters.host ?? filters.host ?? connectedHost,
+                  })}
+                >
+                  <Download className="h-3 w-3 mr-1" /> Download CSV
+                </a>
               </Button>
               {canWrite && (
                 <>

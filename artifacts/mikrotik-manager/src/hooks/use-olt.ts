@@ -412,6 +412,28 @@ export function useOltLoginHistory(filters: OltLoginHistoryFilters, opts?: { ena
   });
 }
 
+/**
+ * Build a fully-qualified URL the browser can navigate to (or use as an
+ * `<a download>` target) for the CSV export of the same filter set the
+ * `useOltLoginHistory` hook serves. Empty / undefined fields are stripped
+ * the same way `oltGet` strips them so the backend sees identical filters.
+ *
+ * Pagination params (`limit`, `offset`) are intentionally NOT forwarded:
+ * the on-screen table caps at the page size (default 200) for UI
+ * responsiveness, but the CSV export is supposed to return the full
+ * filtered set. The server applies its own export-sized default cap
+ * (100k rows) when `limit` is absent.
+ */
+export function buildOltLoginHistoryCsvUrl(filters: OltLoginHistoryFilters & { host?: string }): string {
+  const qs = new URLSearchParams();
+  const PAGINATION_KEYS = new Set(["limit", "offset"]);
+  for (const [k, v] of Object.entries(filters)) {
+    if (PAGINATION_KEYS.has(k)) continue;
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  }
+  return `${apiBase}/api/olt/login-history.csv${qs.toString() ? `?${qs}` : ""}`;
+}
+
 export function useOltPurgeLoginHistory() {
   const qc = useQueryClient();
   return useMutation({

@@ -1511,6 +1511,128 @@ router.get("/olt/login-history", async (req, res): Promise<void> => {
   }
 });
 
+// CSV export of the same filtered set the GET endpoint serves. Lets ops hand
+// raw rows to security / compliance reviewers without paginating through the
+// UI. Same auth as GET (any authed user — read-only is allowed). The cap is
+// generous (100k rows) so a normal year of audit data fits in one download
+// while still bounding worst-case memory.
+const CsvQuery = HistoryQuery.extend({
+  // Override default 200 with a much larger ceiling for export use; callers
+  // can still pass a smaller `limit` to truncate.
+  limit: z.coerce.number().int().positive().max(100_000).default(100_000),
+});
+
+// Characters that, when leading a CSV cell, are interpreted as formulas by
+// Excel / Google Sheets / LibreOffice. An attacker who can inject one of
+// these into a string field (host, username, source-ip, channel, ...) could
+// trigger code execution when the operator opens the export. Standard
+// mitigation: prefix the cell with a single quote so the spreadsheet treats
+// it as text. Quoting alone (CSV escaping) does NOT prevent this — the
+// formula engine runs on the *unquoted* cell value after CSV parsing.
+// See: OWASP "CSV Injection" / CWE-1236.
+const CSV_FORMULA_LEADERS = /^[=+\-@\t\r]/;
+
+function csvField(v: string | number | null | undefined): string {
+  if (v === null || v === undefined) return "";
+  let s = String(v);
+  if (CSV_FORMULA_LEADERS.test(s)) s = `'${s}`;
+  // Always quote: handles commas, quotes, newlines, and leading-zero/exponent
+  // weirdness consistently. Embedded quotes are escaped by doubling.
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+function safeFilenamePart(s: string): string {
+  return s.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 64) || "all";
+}
+
+router.get("/olt/login-history.csv", async (req, res): Promise<void> => {
+  const userId = req.userId;
+  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  const parsed = CsvQuery.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const q = parsed.data;
+  const fromDate = q.from ? parseDeviceTimestamp(q.from) : null;
+  const toDate = q.to ? parseDeviceTimestamp(q.to) : null;
+  if (q.from && !fromDate) { res.status(400).json({ error: "Invalid `from` timestamp" }); return; }
+  if (q.to && !toDate) { res.status(400).json({ error: "Invalid `to` timestamp" }); return; }
+
+  const conds = [eq(oltLoginEventsTable.ownerUserId, userId)];
+  if (q.host) conds.push(eq(oltLoginEventsTable.host, q.host));
+  if (q.username) conds.push(eq(oltLoginEventsTable.username, q.username));
+  if (q.sourceIp) conds.push(ilike(oltLoginEventsTable.sourceIp, `%${q.sourceIp}%`));
+  if (q.channel) conds.push(eq(oltLoginEventsTable.channel, q.channel.toLowerCase()));
+  if (q.result) conds.push(eq(oltLoginEventsTable.result, q.result));
+  if (fromDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) >= ${fromDate}`);
+  if (toDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) <= ${toDate}`);
+
+  try {
+    const where = conds.length === 1 ? conds[0] : and(...conds);
+    const rows = await db
+      .select()
+      .from(oltLoginEventsTable)
+      .where(where)
+      .orderBy(
+        sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) desc nulls last`,
+        desc(oltLoginEventsTable.id),
+      )
+      .limit(q.limit)
+      .offset(q.offset);
+
+    // Build a stable, archival filename: olt-login-history__<host>__<from>_<to>.csv
+    const hostPart = safeFilenamePart(q.host ?? "all-hosts");
+    const fromPart = safeFilenamePart(q.from ?? "earliest");
+    const toPart = safeFilenamePart(q.to ?? "latest");
+    const filename = `olt-login-history__${hostPart}__${fromPart}_${toPart}.csv`;
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`,
+    );
+    res.setHeader("Cache-Control", "no-store");
+
+    // Header row (UTF-8 BOM up front so Excel opens it correctly).
+    res.write("\uFEFF");
+    res.write(
+      [
+        "host",
+        "username",
+        "source_ip",
+        "channel",
+        "login_at",
+        "logout_at",
+        "result",
+        "seen_at",
+      ].map(csvField).join(",") + "\r\n",
+    );
+    for (const r of rows) {
+      res.write(
+        [
+          csvField(r.host),
+          csvField(r.username),
+          csvField(r.sourceIp),
+          csvField(r.channel),
+          csvField(r.loginAt ? r.loginAt.toISOString() : r.loginAtRaw),
+          csvField(r.logoutAt ? r.logoutAt.toISOString() : r.logoutAtRaw),
+          csvField(r.result),
+          csvField(r.seenAt.toISOString()),
+        ].join(",") + "\r\n",
+      );
+    }
+    res.end();
+  } catch (err) {
+    // Headers may already be sent; if so, just terminate. Otherwise return JSON.
+    if (res.headersSent) {
+      res.end();
+    } else {
+      res.status(500).json({ error: errMsg(err) });
+    }
+  }
+});
+
 const PurgeQuery = z.object({
   /** Numeric event id — when set, deletes only that single row. */
   id: z.coerce.number().int().positive().optional(),

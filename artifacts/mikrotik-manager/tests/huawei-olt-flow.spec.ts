@@ -85,8 +85,24 @@ async function installBackendMocks(context: BrowserContext) {
     ),
   );
   await context.route("**/api/olt/login-history**", (route) => {
+    const url = route.request().url();
     if (route.request().method() === "DELETE") {
       route.fulfill(json({ success: true, deleted: 1 }));
+      return;
+    }
+    // CSV export — return a minimal valid CSV with the contract'd headers.
+    if (url.includes("/login-history.csv")) {
+      route.fulfill({
+        status: 200,
+        contentType: "text/csv; charset=utf-8",
+        headers: {
+          "Content-Disposition": 'attachment; filename="olt-login-history__10.0.0.1__earliest_latest.csv"',
+        },
+        body:
+          "\uFEFF" +
+          'host,username,source_ip,channel,login_at,logout_at,result,seen_at\r\n' +
+          '"10.0.0.1","root","10.10.0.99","ssh","2026-04-22T09:30:00.000Z","2026-04-22T10:00:00.000Z","success","2026-04-22T10:00:05.000Z"\r\n',
+      });
       return;
     }
     route.fulfill(
@@ -231,5 +247,23 @@ test.describe("Huawei OLT vendor flow", () => {
 
     // Writer (canWrite=true via /api/admin/me mock) sees a Delete control.
     await expect(histRow.getByRole("button", { name: /Delete/ })).toBeVisible();
+
+    // --- CSV export (Task #14) ---------------------------------------------
+    // The Download CSV anchor is visible to all roles, points at the new
+    // CSV endpoint with the current filters applied, and triggers a real
+    // browser download when clicked.
+    // shadcn Button + asChild forwards data-testid onto the rendered <a>.
+    const csvAnchor = page.locator('a[data-testid="logins-history-download-csv"]');
+    await expect(csvAnchor).toBeVisible();
+    const href = await csvAnchor.getAttribute("href");
+    expect(href).toContain("/api/olt/login-history.csv");
+    expect(href).toContain("host=10.0.0.1");
+
+    const [download] = await Promise.all([
+      page.waitForEvent("download"),
+      csvAnchor.click(),
+    ]);
+    // The mocked Content-Disposition above sets a stable filename.
+    expect(download.suggestedFilename()).toMatch(/^olt-login-history__.*\.csv$/);
   });
 });
