@@ -1,7 +1,8 @@
 # Huawei OLT vendor flow — Playwright e2e test plan
 
 This is a re-usable test plan for the testing skill (`runTest`). It exercises
-the four scenarios called out in task #5:
+the four scenarios called out in task #5 plus a vendor-toggle reset scenario
+(task #12):
 
 1. Selecting **Huawei OLT** on the connect screen locks Port to `22` and hides
    the Transport selector.
@@ -11,6 +12,9 @@ the four scenarios called out in task #5:
    `/dashboard`.
 4. The chat sends `vendor: "huawei-olt"` in the request body to
    `POST /api/chat/stream`.
+5. Flipping vendor MikroTik → Huawei OLT → MikroTik on the connect screen
+   restores the Transport `<select>` (defaulting to `api-ssl`) and re-enables
+   the Port input at value `8729`.
 
 All backend traffic is mocked via Playwright `context.route()` so the test
 does not depend on a real Huawei OLT or real API server responses.
@@ -73,14 +77,16 @@ they match regardless of the app's base path:
 11. [Verify] **(scenario 3)** URL path resolves to `/dashboard`. OLT sidebar items still visible.
 12. [Browser] **(scenario 4)** Open the chat sidebar if not open. Type `hello from olt test` into the chat textarea/input and submit (Enter or send button). Wait up to 5 seconds for `window.__lastChatBody` to be defined (use `page.waitForFunction`).
 13. [Verify] Read `window.__lastChatBody`. Assert it is an object whose `.vendor === "huawei-olt"` and that it has a `.messages` array.
+14. [Browser] **(scenario 5)** In a fresh context (or after navigating back to `/`), confirm the connect screen shows the Transport `<select>` with value `api-ssl` and the Port input enabled at `8729`. Click "Huawei OLT" — the Transport `<select>` disappears and the Port input becomes `22` (disabled). Click "MikroTik" again.
+15. [Verify] **(scenario 5)** The Transport `<select>` is visible again with value `api-ssl`, AND the Port input is enabled with value `8729`.
 
-Report which of the four scenarios pass/fail with screenshots.
+Report which of the five scenarios pass/fail with screenshots.
 
 ---
 
 ## Executable spec
 
-The same four scenarios are also covered by an executable Playwright spec at
+The same five scenarios are also covered by an executable Playwright spec at
 `tests/huawei-olt-flow.spec.ts`. Run it locally with:
 
 ```bash
@@ -96,3 +102,8 @@ Clerk session. Production code is untouched.
 - 2026-04-24 — `runTest` returned `status: "success"` with all four scenarios
   passing (subagent `8bb36a09-60d1-40c5-ab26-521986cc4072`).
 - 2026-04-24 — `pnpm test:e2e` Playwright spec passed (1/1).
+- 2026-04-24 — added scenario 5 (vendor toggle reset MikroTik → Huawei OLT
+  → MikroTik); the new Playwright case
+  `Huawei OLT vendor flow › switching vendor MikroTik → Huawei OLT →
+  MikroTik resets transport/port` passes locally (`pnpm exec playwright
+  test -g "switching vendor MikroTik"` → 1/1).

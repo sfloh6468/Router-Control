@@ -9,13 +9,16 @@ import { test, expect, type BrowserContext, type Page, type Route } from "@playw
  * aliases `@clerk/react` to a local stub which always reports the user as
  * signed-in. No production code is changed; the stub only exists for tests.
  *
- * The four scenarios mirror task #5:
- *   1. Selecting "Huawei OLT" locks Port=22 and hides the Transport selector.
- *   2. After a (mocked) successful OLT connect the sidebar shows
+ * The five scenarios are:
+ *   1. (task #5) Selecting "Huawei OLT" locks Port=22 and hides the Transport
+ *      selector.
+ *   2. (task #5) After a (mocked) successful OLT connect the sidebar shows
  *      ONUs / Service Ports / Alarms (and not the MikroTik items).
- *   3. Cross-vendor URLs (e.g. /interfaces) redirect to /dashboard while
- *      connected as OLT.
- *   4. The chat sends `vendor: "huawei-olt"` in its POST body.
+ *   3. (task #5) Cross-vendor URLs (e.g. /interfaces) redirect to /dashboard
+ *      while connected as OLT.
+ *   4. (task #5) The chat sends `vendor: "huawei-olt"` in its POST body.
+ *   5. (task #12) Flipping vendor MikroTik → Huawei OLT → MikroTik on the
+ *      connect screen restores Transport=api-ssl and Port=8729 (enabled).
  */
 
 const json = (body: unknown) => ({
@@ -209,6 +212,41 @@ test.describe("Huawei OLT vendor flow", () => {
     await expect.poll(() => captured.body, { timeout: 10_000 }).toBeTruthy();
     expect(captured.body.vendor).toBe("huawei-olt");
     expect(Array.isArray(captured.body.messages)).toBe(true);
+  });
+
+  test("switching vendor MikroTik → Huawei OLT → MikroTik resets transport/port", async ({
+    page,
+    context,
+  }) => {
+    await installBackendMocks(context);
+
+    await page.goto("/");
+    await expect(page.getByRole("heading", { name: /Network Device Manager/i })).toBeVisible();
+
+    const mikrotikBtn = page.getByRole("button", { name: "MikroTik" });
+    const oltBtn = page.getByRole("button", { name: "Huawei OLT" });
+    const portInput = page.locator('input[name="port"]');
+    const transportSelect = page.locator('select[name="transport"]');
+
+    // Baseline: MikroTik default.
+    await expect(transportSelect).toBeVisible();
+    await expect(transportSelect).toHaveValue("api-ssl");
+    await expect(portInput).toHaveValue("8729");
+    await expect(portInput).toBeEnabled();
+
+    // Flip to Huawei OLT — port locks to 22 and transport selector disappears.
+    await oltBtn.click();
+    await expect(transportSelect).toHaveCount(0);
+    await expect(portInput).toHaveValue("22");
+    await expect(portInput).toBeDisabled();
+
+    // Flip back to MikroTik — transport selector returns and the form
+    // resets to api-ssl/8729 with the port input re-enabled.
+    await mikrotikBtn.click();
+    await expect(transportSelect).toBeVisible();
+    await expect(transportSelect).toHaveValue("api-ssl");
+    await expect(portInput).toHaveValue("8729");
+    await expect(portInput).toBeEnabled();
   });
 
   test("OLT Users page exposes Live ⇄ History toggle and renders DB events", async ({

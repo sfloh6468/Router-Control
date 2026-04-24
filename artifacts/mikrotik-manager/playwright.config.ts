@@ -14,6 +14,11 @@ export default defineConfig({
   testMatch: /.*\.spec\.ts/,
   timeout: 60_000,
   fullyParallel: false,
+  // Single worker: tests share one Vite dev server (`reuseExistingServer`)
+  // and writing trace artifacts from multiple workers concurrently caused
+  // intermittent ENOENT failures on the trace files. Serializing the run
+  // also keeps the chat-stream route mock from racing across contexts.
+  workers: 1,
   reporter: [["list"]],
   globalSetup: "./tests/global-setup.ts",
   use: {
