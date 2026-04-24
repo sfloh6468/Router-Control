@@ -61,6 +61,63 @@ async function installBackendMocks(context: BrowserContext) {
   await context.route("**/api/olt/users", (route) =>
     route.fulfill(json({ success: true, users: [] })),
   );
+  await context.route("**/api/olt/user-logins", (route) =>
+    route.fulfill(
+      json({
+        success: true,
+        sessions: [
+          {
+            id: "live-1",
+            username: "root",
+            sourceIp: "10.10.0.5",
+            channel: "ssh",
+            loginAt: "2026-04-23 10:00:00",
+            logoutAt: null,
+            result: "ok",
+            active: true,
+            kickHandle: "0",
+          },
+        ],
+        rawOnline: "",
+        rawLog: "",
+        ingested: 0,
+      }),
+    ),
+  );
+  await context.route("**/api/olt/login-history**", (route) => {
+    if (route.request().method() === "DELETE") {
+      route.fulfill(json({ success: true, deleted: 1 }));
+      return;
+    }
+    route.fulfill(
+      json({
+        success: true,
+        events: [
+          {
+            id: 42,
+            ownerUserId: "test-user",
+            host: "10.0.0.1",
+            username: "root",
+            sourceIp: "10.10.0.99",
+            channel: "ssh",
+            loginAt: "2026-04-22T09:30:00.000Z",
+            loginAtRaw: "2026-04-22 09:30:00",
+            logoutAt: "2026-04-22T10:00:00.000Z",
+            logoutAtRaw: "2026-04-22 10:00:00",
+            result: "ok",
+            seenAt: "2026-04-22T10:00:05.000Z",
+            lastSeenAt: "2026-04-22T10:00:05.000Z",
+          },
+        ],
+        total: 1,
+        limit: 50,
+        offset: 0,
+      }),
+    );
+  });
+  await context.route("**/api/olt/password-policy", (route) =>
+    route.fulfill(json({ success: true, policy: null })),
+  );
   await context.route("**/api/mikrotik/**", (route) =>
     route.fulfill(json({ success: true })),
   );
@@ -136,5 +193,43 @@ test.describe("Huawei OLT vendor flow", () => {
     await expect.poll(() => captured.body, { timeout: 10_000 }).toBeTruthy();
     expect(captured.body.vendor).toBe("huawei-olt");
     expect(Array.isArray(captured.body.messages)).toBe(true);
+  });
+
+  test("OLT Users page exposes Live ⇄ History toggle and renders DB events", async ({
+    page,
+    context,
+  }) => {
+    await installBackendMocks(context);
+
+    // Connect as OLT to seed router context.
+    await page.goto("/");
+    await page.getByRole("button", { name: "Huawei OLT" }).click();
+    await page.locator('input[name="host"]').fill("10.0.0.1");
+    await page.locator('input[name="username"]').fill("root");
+    await page.locator('input[name="password"]').fill("secret123");
+    await page.getByRole("button", { name: /Establish Connection/i }).click();
+    await page.waitForURL("**/dashboard", { timeout: 10_000 });
+
+    await page.goto("/olt-users");
+
+    // Both toggle buttons render.
+    const liveBtn = page.getByRole("button", { name: /^Live \(device\)$/ });
+    const histBtn = page.getByRole("button", { name: /^Historical \(database\)$/ });
+    await expect(liveBtn).toBeVisible({ timeout: 10_000 });
+    await expect(histBtn).toBeVisible();
+
+    // Live mode is the default and shows the mocked active session.
+    await expect(page.getByText("10.10.0.5")).toBeVisible();
+
+    // Switch to historical and verify the DB event row is rendered.
+    await histBtn.click();
+    const histRow = page.locator('[data-testid="history-row-42"]');
+    await expect(histRow).toBeVisible({ timeout: 10_000 });
+    await expect(histRow).toContainText("root");
+    await expect(histRow).toContainText("10.0.0.1");
+    await expect(histRow).toContainText("10.10.0.99");
+
+    // Writer (canWrite=true via /api/admin/me mock) sees a Delete control.
+    await expect(histRow.getByRole("button", { name: /Delete/ })).toBeVisible();
   });
 });

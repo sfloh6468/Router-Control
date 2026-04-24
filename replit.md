@@ -75,6 +75,7 @@ A React + Vite application branded as "Network Device Manager".
 - **Routes**: Specific API endpoints (`/api/olt/*`) for OLT operations like connection verification, dashboard data, ONT management, service port configuration, alarms, and raw command execution.
 - **Chat**: Vendor-aware system prompt and toolset for the AI assistant when managing OLTs.
 - **Schema**: `router_profiles.ts` includes a `vendor` column to distinguish between MikroTik and Huawei OLT profiles.
+- **OLT Login Audit**: `lib/db/src/schema/olt_login_events.ts` defines `olt_login_events`, a per-owner permanent record of OLT operator login/logout/failed events mirrored from `display online user` + `display security log`. Rows are deduped by `(owner_user_id, host, username, login_at_raw, channel)` and ingested best-effort on every poll of `POST /api/olt/user-logins`. The OLT Users page (`artifacts/mikrotik-manager/src/pages/olt-users.tsx`) exposes a "Live (device)" vs "Historical (database)" toggle; history supports date-range / username / source-IP / channel / result filters via `GET /api/olt/login-history`. Read-only users can browse history; only writers can purge entries (single row, "≤ To" range, or all) via `DELETE /api/olt/login-history`.
 
 # External Dependencies
 

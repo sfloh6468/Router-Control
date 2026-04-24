@@ -30,6 +30,30 @@ async function oltPost<T>(path: string, body: Record<string, unknown>): Promise<
   return j;
 }
 
+async function oltGet<T>(path: string, query?: Record<string, string | number | undefined>): Promise<T> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(query ?? {})) {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  }
+  const url = `${apiBase}/api${path}${qs.toString() ? `?${qs}` : ""}`;
+  const r = await fetch(url, { method: "GET" });
+  const j = (await r.json()) as T & { error?: string };
+  if (!r.ok || j.error) throw new Error(j.error ?? `HTTP ${r.status}`);
+  return j;
+}
+
+async function oltDelete<T>(path: string, query?: Record<string, string | number | boolean | undefined>): Promise<T> {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(query ?? {})) {
+    if (v !== undefined && v !== null && v !== "") qs.set(k, String(v));
+  }
+  const url = `${apiBase}/api${path}${qs.toString() ? `?${qs}` : ""}`;
+  const r = await fetch(url, { method: "DELETE" });
+  const j = (await r.json()) as T & { error?: string };
+  if (!r.ok || j.error) throw new Error(j.error ?? `HTTP ${r.status}`);
+  return j;
+}
+
 export interface GponPortSummary {
   port: string;
   state: string | null;
@@ -331,12 +355,74 @@ export function useOltUserLogins() {
   return useQuery({
     queryKey: ["olt", "user-logins", credentials?.host],
     queryFn: () =>
-      oltPost<{ sessions: OltUserSession[]; rawOnline: string; rawLog: string }>(
-        "/olt/user-logins",
-        credPayload(credentials),
-      ),
+      oltPost<{
+        sessions: OltUserSession[];
+        rawOnline: string;
+        rawLog: string;
+        /** Number of newly persisted audit rows on this poll (best-effort). */
+        ingested?: number;
+      }>("/olt/user-logins", credPayload(credentials)),
     enabled: !!credentials && vendor === "huawei-olt",
     refetchInterval: 30000,
+  });
+}
+
+// ─────────────────────────── Historical login audit (DB) ───────────────────────────
+
+export interface OltLoginHistoryEvent {
+  id: number;
+  host: string;
+  username: string;
+  sourceIp: string | null;
+  channel: string | null;
+  /** ISO 8601 string (or null if unparseable on ingest) */
+  loginAt: string | null;
+  /** Original device-formatted string */
+  loginAtRaw: string;
+  logoutAt: string | null;
+  logoutAtRaw: string | null;
+  result: string;
+  seenAt: string;
+  lastSeenAt: string;
+}
+
+export interface OltLoginHistoryFilters {
+  host?: string;
+  from?: string;
+  to?: string;
+  username?: string;
+  sourceIp?: string;
+  channel?: string;
+  result?: "success" | "fail";
+  limit?: number;
+  offset?: number;
+}
+
+export function useOltLoginHistory(filters: OltLoginHistoryFilters, opts?: { enabled?: boolean }) {
+  const { credentials } = useRouterContext();
+  const host = filters.host ?? credentials?.host;
+  return useQuery({
+    queryKey: ["olt", "login-history", host, filters],
+    queryFn: () =>
+      oltGet<{ events: OltLoginHistoryEvent[]; total: number; limit: number; offset: number }>(
+        "/olt/login-history",
+        { ...filters, host },
+      ),
+    enabled: opts?.enabled !== false && !!host,
+  });
+}
+
+export function useOltPurgeLoginHistory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      id?: number;
+      host?: string;
+      before?: string;
+      all?: boolean;
+    }) =>
+      oltDelete<{ success: boolean; deleted: number }>("/olt/login-history", vars),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["olt", "login-history"] }),
   });
 }
 

@@ -6,6 +6,8 @@
  */
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
+import { and, eq, ilike, desc, sql } from "drizzle-orm";
+import { db, oltLoginEventsTable } from "@workspace/db";
 import { requireUser, requireWriter } from "../middlewares/requireAuth";
 import {
   withOlt,
@@ -1252,6 +1254,100 @@ function parseSecurityLog(text: string): OltUserSession[] {
   return sessions;
 }
 
+/**
+ * Mirror live + security-log sessions into the `olt_login_events` audit
+ * table. Returns the number of newly-recorded rows. Errors are swallowed
+ * so the live `/olt/user-logins` response is never blocked by an audit
+ * write — admins still see the device data, and the next poll will
+ * retry the ingest.
+ */
+async function ingestLoginEvents(
+  ownerUserId: string,
+  host: string,
+  active: OltUserSession[],
+  history: OltUserSession[],
+): Promise<number> {
+  const all = [...active, ...history];
+  if (all.length === 0) return 0;
+  let inserted = 0;
+  const now = new Date();
+  for (const s of all) {
+    if (!s.username) continue;
+    // Failed logins are standalone rows; closed sessions might have only a
+    // logoutAt; active sessions might have only a loginAt. We dedup on the
+    // login timestamp string, so failed/orphan rows still get a stable key.
+    const loginAtRaw = s.loginAt ?? "";
+    // Empty-string sentinel keeps `channel` participating in the dedup
+    // unique index — Postgres treats NULL values as distinct, so a real
+    // NULL would let the same event re-insert on every poll.
+    const channel = s.channel ?? "";
+    const result =
+      s.result === "fail" ? "fail" : "success";
+    try {
+      const r = await db
+        .insert(oltLoginEventsTable)
+        .values({
+          ownerUserId,
+          host,
+          username: s.username,
+          sourceIp: s.sourceIp,
+          channel,
+          loginAt: parseDeviceTimestamp(s.loginAt),
+          loginAtRaw,
+          logoutAt: parseDeviceTimestamp(s.logoutAt),
+          logoutAtRaw: s.logoutAt,
+          result,
+          seenAt: now,
+          lastSeenAt: now,
+        })
+        .onConflictDoUpdate({
+          target: [
+            oltLoginEventsTable.ownerUserId,
+            oltLoginEventsTable.host,
+            oltLoginEventsTable.username,
+            oltLoginEventsTable.loginAtRaw,
+            oltLoginEventsTable.channel,
+          ],
+          set: {
+            // Keep refreshing the logout / source-ip when a session that
+            // was previously open finally gets a logout event.
+            logoutAt: parseDeviceTimestamp(s.logoutAt),
+            logoutAtRaw: s.logoutAt,
+            sourceIp: s.sourceIp,
+            lastSeenAt: now,
+          },
+        })
+        .returning({ id: oltLoginEventsTable.id, seenAt: oltLoginEventsTable.seenAt });
+      // `returning` always emits one row for ON CONFLICT DO UPDATE; we
+      // count it as "inserted" only when the seenAt matches the current
+      // tick (i.e. it's brand new, not an update).
+      if (r[0] && Math.abs(r[0].seenAt.getTime() - now.getTime()) < 1000) {
+        inserted += 1;
+      }
+    } catch (err) {
+      console.warn("[olt] login-event ingest failed:", err);
+    }
+  }
+  return inserted;
+}
+
+/**
+ * Parse a device timestamp like "2024-04-15 10:23:45" or
+ * "2024-04-15T10:23". Returns null for unparseable / null inputs.
+ */
+function parseDeviceTimestamp(s: string | null | undefined): Date | null {
+  if (!s) return null;
+  const trimmed = s.trim();
+  if (!trimmed) return null;
+  // Normalise space → T so Date can parse it as ISO-ish.
+  const iso = trimmed.replace(" ", "T");
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  // Reject dates in the far past (epoch/1970) — usually parser bugs.
+  if (d.getFullYear() < 2000) return null;
+  return d;
+}
+
 router.post("/olt/user-logins", async (req, res): Promise<void> => {
   const creds = parseCreds(req, res);
   if (!creds) return;
@@ -1281,11 +1377,190 @@ router.post("/olt/user-logins", async (req, res): Promise<void> => {
         sessions: [...active, ...history],
         rawOnline: onlineRaw,
         rawLog: logRaw,
+        active,
+        history,
       };
     });
-    res.json(data);
+    // Mirror into the audit table for permanent retention. Best-effort —
+    // never block the live response on a DB write.
+    let ingested = 0;
+    if (req.userId) {
+      try {
+        ingested = await ingestLoginEvents(
+          req.userId,
+          creds.host,
+          data.active,
+          data.history,
+        );
+      } catch (err) {
+        console.warn("[olt] login-event ingest job failed:", err);
+      }
+    }
+    res.json({
+      sessions: data.sessions,
+      rawOnline: data.rawOnline,
+      rawLog: data.rawLog,
+      ingested,
+    });
   } catch (err) {
     res.status(400).json({ error: errMsg(err) });
+  }
+});
+
+// ─────────────────────────── HISTORICAL LOGIN AUDIT ───────────────────────────
+//
+// Every poll of /olt/user-logins mirrors events into `olt_login_events`. The
+// endpoints below let admins browse, filter, and (for writers) purge that
+// permanent record so they can answer questions like "who signed in last
+// month?" or "show every failed login from this IP" even after the OLT has
+// rotated its own log.
+
+const HistoryQuery = z.object({
+  host: z.string().min(1).optional(),
+  /** ISO date or date-time; lower bound on login_at (or logout_at when login is null) */
+  from: z.string().optional(),
+  /** ISO date or date-time; upper bound on login_at */
+  to: z.string().optional(),
+  username: z.string().min(1).max(64).optional(),
+  sourceIp: z.string().min(1).max(64).optional(),
+  channel: z.string().min(1).max(32).optional(),
+  result: z.enum(["success", "fail"]).optional(),
+  limit: z.coerce.number().int().positive().max(1000).default(200),
+  offset: z.coerce.number().int().nonnegative().default(0),
+});
+
+interface HistoryRow {
+  id: number;
+  host: string;
+  username: string;
+  sourceIp: string | null;
+  channel: string | null;
+  loginAt: string | null;
+  loginAtRaw: string;
+  logoutAt: string | null;
+  logoutAtRaw: string | null;
+  result: string;
+  seenAt: string;
+  lastSeenAt: string;
+}
+
+router.get("/olt/login-history", async (req, res): Promise<void> => {
+  const userId = req.userId;
+  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  const parsed = HistoryQuery.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const q = parsed.data;
+  const fromDate = q.from ? parseDeviceTimestamp(q.from) : null;
+  const toDate = q.to ? parseDeviceTimestamp(q.to) : null;
+  if (q.from && !fromDate) { res.status(400).json({ error: "Invalid `from` timestamp" }); return; }
+  if (q.to && !toDate) { res.status(400).json({ error: "Invalid `to` timestamp" }); return; }
+
+  const conds = [eq(oltLoginEventsTable.ownerUserId, userId)];
+  if (q.host) conds.push(eq(oltLoginEventsTable.host, q.host));
+  if (q.username) conds.push(eq(oltLoginEventsTable.username, q.username));
+  if (q.sourceIp) conds.push(ilike(oltLoginEventsTable.sourceIp, `%${q.sourceIp}%`));
+  if (q.channel) conds.push(eq(oltLoginEventsTable.channel, q.channel.toLowerCase()));
+  if (q.result) conds.push(eq(oltLoginEventsTable.result, q.result));
+  // Date filters fall back to logout_at when login_at is null (orphan
+  // logout rows or events whose device timestamp didn't parse) so the
+  // caller's date range never silently loses rows.
+  if (fromDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) >= ${fromDate}`);
+  if (toDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) <= ${toDate}`);
+
+  try {
+    const where = conds.length === 1 ? conds[0] : and(...conds);
+    const rows = await db
+      .select()
+      .from(oltLoginEventsTable)
+      .where(where)
+      .orderBy(
+        sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) desc nulls last`,
+        desc(oltLoginEventsTable.id),
+      )
+      .limit(q.limit)
+      .offset(q.offset);
+    const totalRow = await db
+      .select({ n: sql<number>`count(*)::int` })
+      .from(oltLoginEventsTable)
+      .where(where);
+    const events: HistoryRow[] = rows.map((r) => ({
+      id: r.id,
+      host: r.host,
+      username: r.username,
+      sourceIp: r.sourceIp,
+      channel: r.channel,
+      loginAt: r.loginAt ? r.loginAt.toISOString() : null,
+      loginAtRaw: r.loginAtRaw,
+      logoutAt: r.logoutAt ? r.logoutAt.toISOString() : null,
+      logoutAtRaw: r.logoutAtRaw,
+      result: r.result,
+      seenAt: r.seenAt.toISOString(),
+      lastSeenAt: r.lastSeenAt.toISOString(),
+    }));
+    res.json({
+      events,
+      total: totalRow[0]?.n ?? 0,
+      limit: q.limit,
+      offset: q.offset,
+    });
+  } catch (err) {
+    res.status(500).json({ error: errMsg(err) });
+  }
+});
+
+const PurgeQuery = z.object({
+  /** Numeric event id — when set, deletes only that single row. */
+  id: z.coerce.number().int().positive().optional(),
+  host: z.string().min(1).optional(),
+  /** Same semantics as history `to` — delete events with login_at <= before */
+  before: z.string().optional(),
+  /** Allow blanket "all my events" purges only when this flag is set. */
+  all: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => v === true || v === "true" || v === "1")
+    .optional(),
+});
+
+router.delete("/olt/login-history", ...requireWriter(), async (req, res): Promise<void> => {
+  const userId = req.userId;
+  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  const parsed = PurgeQuery.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const q = parsed.data;
+  const before = q.before ? parseDeviceTimestamp(q.before) : null;
+  if (q.before && !before) { res.status(400).json({ error: "Invalid `before` timestamp" }); return; }
+
+  // Refuse a totally-unscoped delete unless the caller explicitly opts in.
+  const hasAnyScope = q.id !== undefined || !!q.host || !!before;
+  if (!hasAnyScope && !q.all) {
+    res.status(400).json({
+      error: "Refusing unscoped delete; pass id, host, before, or all=true",
+    });
+    return;
+  }
+
+  const conds = [eq(oltLoginEventsTable.ownerUserId, userId)];
+  if (q.id !== undefined) conds.push(eq(oltLoginEventsTable.id, q.id));
+  if (q.host) conds.push(eq(oltLoginEventsTable.host, q.host));
+  // Match the GET semantics: fall back to logout_at when login_at is null
+  // so a "before" cutoff can also remove orphan logout / unparsed rows.
+  if (before) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) <= ${before}`);
+
+  try {
+    const where = conds.length === 1 ? conds[0] : and(...conds);
+    const r = await db
+      .delete(oltLoginEventsTable)
+      .where(where)
+      .returning({ id: oltLoginEventsTable.id });
+    res.json({ success: true, deleted: r.length });
+  } catch (err) {
+    res.status(500).json({ success: false, error: errMsg(err) });
   }
 });
 
