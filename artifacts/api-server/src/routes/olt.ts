@@ -771,25 +771,39 @@ router.post("/olt/user/add", ...requireWriter(), async (req, res): Promise<void>
       { host: d.host, port: d.port, username: d.username, password: d.password },
       async (s) => {
         await s.exec("config");
-        // EA5800 firmwares treat `terminal user name <name>` as an interactive
-        // wizard. We feed the answers in order: password, confirm password,
-        // user level, profile (or '-' to skip), append info, reenter-num.
-        // Any line the OLT does not actually prompt for is harmless because
-        // we don't issue further commands until we see the regular prompt.
-        const wizardOut = await s.execScript([
+        // EA5800 V100R019 `terminal user name <name>` wizard prompts, in
+        // documented order:
+        //   1. User Access Level(visitor/operator/administrator)[operator]:
+        //   2. Password:
+        //   3. Confirm password:
+        //   4. User profile name (<=15 chars), '?' - help, '-' - default[-]:
+        //   5. User's reenter number(0~10)[3]:
+        //   6. Allow modify the password by all users(yes/no)[no]:
+        //   7. Append information(<=30 chars)[-]:
+        // Some firmwares omit (6) entirely; the prompt-driven helper skips
+        // missing prompts gracefully because each step waits for its
+        // specific matcher.
+        const wiz = await s.execInteractive(
           `terminal user name ${d.name}`,
-          d.newPassword,
-          d.newPassword,
-          d.level,
-          d.profile ?? "root",
-          d.appendInfo ?? "-",
-          String(d.reenterNum ?? 4),
-        ], { timeoutMs: 20000 });
+          [
+            { when: /User\s*Access\s*Level[^\n]*:\s*$/i, send: d.level, label: "user level" },
+            { when: /(?:^|\n)\s*Password\s*:\s*$/i, send: d.newPassword, label: "password" },
+            { when: /Confirm\s*password\s*:\s*$/i, send: d.newPassword, label: "confirm password" },
+            { when: /User\s*profile\s*name[^\n]*:\s*$/i, send: d.profile ?? "-", label: "profile" },
+            { when: /reenter\s*number[^\n]*:\s*$/i, send: String(d.reenterNum ?? 3), label: "reenter number" },
+            { when: /Allow\s*modify\s*the\s*password[^\n]*:\s*$/i, send: "no", label: "allow-modify" },
+            { when: /Append\s*information[^\n]*:\s*$/i, send: d.appendInfo ?? "-", label: "append info" },
+          ],
+          { stepTimeoutMs: 6000, totalTimeoutMs: 30000 },
+        );
         await s.exec("quit");
-        // Treat common error tokens as failure even if the wizard exited
-        // back to a prompt. Otherwise success is best-effort.
-        const failed = /(failure|failed|invalid|error|already exist|denied)/i.test(wizardOut);
-        return { output: wizardOut, success: !failed };
+        const success = wiz.failure === null;
+        return {
+          output: wiz.transcript,
+          error: wiz.failure ?? undefined,
+          stepsCompleted: wiz.completedSteps,
+          success,
+        };
       },
     );
     res.json(out);
@@ -809,15 +823,22 @@ router.post("/olt/user/delete", ...requireWriter(), async (req, res): Promise<vo
       { host: d.host, port: d.port, username: d.username, password: d.password },
       async (s) => {
         await s.exec("config");
-        // Some EA5800 firmwares prompt "Are you sure to delete? (y/n)" — we
-        // pre-answer 'y' via the wizard helper.
-        const out = await s.execScript([
+        // EA5800 prompts: "Are you sure to delete user <name>? (y/n)[n]:"
+        // Some firmware variants phrase it as "Confirm to delete? (y/n)" or
+        // skip the confirmation entirely; the matcher covers both.
+        const wiz = await s.execInteractive(
           `undo terminal user name ${d.name}`,
-          "y",
-        ], { timeoutMs: 15000 });
+          [
+            { when: /(?:Are you sure|Confirm)[^\n]*\(\s*y\s*\/\s*n\s*\)[^\n]*:\s*$/i, send: "y", label: "delete confirm" },
+          ],
+          { stepTimeoutMs: 5000, totalTimeoutMs: 20000 },
+        );
         await s.exec("quit");
-        const failed = /(failure|failed|invalid|error|does not exist|denied|cannot)/i.test(out);
-        return { output: out, success: !failed };
+        return {
+          output: wiz.transcript,
+          error: wiz.failure ?? undefined,
+          success: wiz.failure === null,
+        };
       },
     );
     res.json(result);
@@ -840,19 +861,27 @@ router.post("/olt/user/password", ...requireWriter(), async (req, res): Promise<
       { host: d.host, port: d.port, username: d.username, password: d.password },
       async (s) => {
         await s.exec("config");
-        // `terminal user password <name>` opens a small wizard prompting
-        // for the new password twice. On firmwares that don't accept the
-        // username argument the same wizard is reachable via
-        // `terminal user password` (which targets the *current* user) — we
-        // try the explicit form first.
-        const out = await s.execScript([
+        // `terminal user password <name>` (admin changing another user)
+        // typically prompts:
+        //   New password:
+        //   Confirm password:
+        // It does NOT ask for the old password (that's the
+        // "modify-mode forced" / self-change case). Some firmwares phrase
+        // the second prompt as "Re-enter password:".
+        const wiz = await s.execInteractive(
           `terminal user password ${d.name}`,
-          d.newPassword,
-          d.newPassword,
-        ], { timeoutMs: 15000 });
+          [
+            { when: /(?:^|\n)\s*New\s*password\s*:\s*$/i, send: d.newPassword, label: "new password" },
+            { when: /(?:Confirm|Re-?enter)\s*password\s*:\s*$/i, send: d.newPassword, label: "confirm password" },
+          ],
+          { stepTimeoutMs: 5000, totalTimeoutMs: 20000 },
+        );
         await s.exec("quit");
-        const failed = /(failure|failed|invalid|error|denied|does not exist|too\s+(short|simple|weak))/i.test(out);
-        return { output: out, success: !failed };
+        return {
+          output: wiz.transcript,
+          error: wiz.failure ?? undefined,
+          success: wiz.failure === null,
+        };
       },
     );
     res.json(result);
@@ -930,12 +959,16 @@ router.post("/olt/password-policy/set", ...requireWriter(), async (req, res): Pr
           outputs.push(await s.exec(`terminal user password aging-time ${d.agingDays}`));
         }
         if (d.modifyMode) {
-          outputs.push(
-            await s.execScript(
-              [`terminal user password modify-mode ${d.modifyMode}`, "y"],
-              { timeoutMs: 10000 },
-            ),
+          // `terminal user password modify-mode <mode>` may prompt
+          // "Are you sure to change the modify-mode? (y/n)[n]:" on EA5800.
+          const wiz = await s.execInteractive(
+            `terminal user password modify-mode ${d.modifyMode}`,
+            [
+              { when: /(?:Are you sure|Confirm)[^\n]*\(\s*y\s*\/\s*n\s*\)[^\n]*:\s*$/i, send: "y", label: "modify-mode confirm" },
+            ],
+            { stepTimeoutMs: 4000, totalTimeoutMs: 12000 },
           );
+          outputs.push(wiz.transcript);
         }
         await s.exec("quit");
         const combined = outputs.join("\n---\n");

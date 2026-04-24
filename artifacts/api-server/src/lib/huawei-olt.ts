@@ -61,6 +61,17 @@ export interface OltCreds {
   password: string;
 }
 
+/** A single step in an interactive wizard: when this prompt matcher hits the
+ *  accumulated output, send `send` to the OLT. */
+export interface WizardStep {
+  /** Regex that should match the prompt the OLT prints (e.g. /Password:\s*$/i). */
+  when: RegExp;
+  /** Line to write in response. */
+  send: string;
+  /** Optional human-readable label used in errors / surfacing. */
+  label?: string;
+}
+
 export interface OltSession {
   exec(command: string, opts?: { timeoutMs?: number }): Promise<string>;
   /**
@@ -70,8 +81,26 @@ export interface OltSession {
    * line at a time). Lines are written sequentially with a small pause to
    * give the OLT time to print each sub-prompt; the combined output is
    * returned once the regular shell prompt reappears.
+   *
+   * Prefer `execInteractive` when you can describe the prompts the OLT will
+   * emit — it adapts to firmware variations in prompt ordering.
    */
   execScript(lines: string[], opts?: { timeoutMs?: number }): Promise<string>;
+  /**
+   * Drive an interactive wizard prompt-by-prompt. The initial command is
+   * written, then each step's `when` regex is matched against the
+   * accumulating shell output; on match, `send` is written. Steps must be
+   * provided in the order the OLT is expected to ask them. If the OLT prints
+   * a normal shell prompt before all steps fire (e.g. earlier firmware that
+   * skips a prompt), remaining steps are dropped and the function resolves
+   * with whatever was emitted. If the OLT prints "Failure:" / "Error:" / a
+   * Huawei-style error line, that line is captured into the result.
+   */
+  execInteractive(
+    initial: string,
+    steps: WizardStep[],
+    opts?: { stepTimeoutMs?: number; totalTimeoutMs?: number },
+  ): Promise<{ transcript: string; failure: string | null; completedSteps: number }>;
   close(): void;
 }
 
@@ -136,6 +165,24 @@ function readUntilPrompt(
     stream.on("data", onData);
     stream.on("close", onClose);
   });
+}
+
+/**
+ * Look for a Huawei-style error line ("Failure:", "Error:", "% ..." parser
+ * error, "does not exist") in OLT output. Returns the first such line for
+ * surfacing to callers, or null if none.
+ */
+function scrapeFailure(text: string): string | null {
+  const lines = text.split("\n");
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (/^(Failure|Error|%)\s*[:.]?\s*\S/i.test(line)) return line;
+    if (/(does not exist|already exists?|invalid (?:user|password|profile|level)|too\s+(?:short|simple|weak|long)|denied|unsupported|wrong password|password.*not.*meet|operation.*fail)/i.test(line)) {
+      return line;
+    }
+  }
+  return null;
 }
 
 /** Strip the echoed command from the start, trailing prompt line, and any
@@ -251,9 +298,120 @@ export async function connectOlt(creds: OltCreds): Promise<OltSession> {
     return job;
   }
 
+  function execInteractive(
+    initial: string,
+    steps: WizardStep[],
+    opts?: { stepTimeoutMs?: number; totalTimeoutMs?: number },
+  ): Promise<{ transcript: string; failure: string | null; completedSteps: number }> {
+    const stepTimeoutMs = opts?.stepTimeoutMs ?? 8000;
+    const totalTimeoutMs = opts?.totalTimeoutMs ?? 60000;
+    const job = chain.then(() => {
+      return new Promise<{ transcript: string; failure: string | null; completedSteps: number }>(
+        (resolve, reject) => {
+          // `transcript` retains everything we've seen for the caller; `acc`
+          // is the rolling tail we run prompt regexes against. We slice `acc`
+          // each time a step matches so the same prompt isn't re-matched.
+          let transcript = "";
+          let acc = "";
+          let stepIdx = 0;
+          let completedSteps = 0;
+          let allAnswersSent = steps.length === 0;
+          let stepDeadline = Date.now() + stepTimeoutMs;
+          const totalDeadline = Date.now() + totalTimeoutMs;
+
+          const cleanup = () => {
+            stream.removeListener("data", onData);
+            stream.removeListener("close", onClose);
+            clearInterval(tick);
+          };
+
+          const finish = (failure: string | null) => {
+            cleanup();
+            resolve({ transcript, failure, completedSteps });
+          };
+
+          const advanceFromBuffer = () => {
+            while (stepIdx < steps.length) {
+              const m = acc.match(steps[stepIdx].when);
+              if (!m || m.index === undefined) break;
+              try {
+                stream.write(steps[stepIdx].send + "\n");
+              } catch (e) {
+                cleanup();
+                reject(e instanceof Error ? e : new Error(String(e)));
+                return;
+              }
+              stepIdx += 1;
+              completedSteps += 1;
+              stepDeadline = Date.now() + stepTimeoutMs;
+              // Drop everything up to and including the matched prompt so
+              // the next iteration sees only newer output.
+              acc = acc.slice(m.index + m[0].length);
+            }
+            if (stepIdx >= steps.length) allAnswersSent = true;
+          };
+
+          const onData = (chunk: Buffer) => {
+            const piece = stripAnsi(chunk.toString("utf-8")).replace(/\r/g, "");
+            transcript += piece;
+            acc += piece;
+            // Honor pagination if the wizard ever pages.
+            while (MORE_RE.test(acc)) {
+              try { stream.write(" "); } catch { /* ignore */ }
+              acc = acc.replace(MORE_RE, "");
+            }
+            advanceFromBuffer();
+            if (allAnswersSent && PROMPT_RE.test(acc)) {
+              const failure = scrapeFailure(acc);
+              finish(failure);
+            }
+          };
+
+          const onClose = () => finish(scrapeFailure(acc));
+
+          const tick = setInterval(() => {
+            const now = Date.now();
+            if (now > totalDeadline) {
+              cleanup();
+              reject(new Error(
+                `Timeout in interactive wizard after ${totalTimeoutMs}ms ` +
+                `(completed ${completedSteps}/${steps.length} steps). ` +
+                `Last output: ${acc.slice(-200)}`,
+              ));
+              return;
+            }
+            if (!allAnswersSent && now > stepDeadline) {
+              const label = steps[stepIdx]?.label ?? `step ${stepIdx + 1}`;
+              cleanup();
+              reject(new Error(
+                `Timeout waiting for OLT prompt at ${label} ` +
+                `(completed ${completedSteps}/${steps.length}). ` +
+                `Last output: ${acc.slice(-200)}`,
+              ));
+              return;
+            }
+          }, 250);
+
+          stream.on("data", onData);
+          stream.on("close", onClose);
+          // Kick off the wizard.
+          try {
+            stream.write(initial + "\n");
+          } catch (e) {
+            cleanup();
+            reject(e instanceof Error ? e : new Error(String(e)));
+          }
+        },
+      );
+    });
+    chain = job.catch(() => { /* keep chain alive */ });
+    return job;
+  }
+
   return {
     exec,
     execScript,
+    execInteractive,
     close() {
       try {
         stream.end();

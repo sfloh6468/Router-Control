@@ -250,10 +250,10 @@ export function useOltAddUser() {
       // overwritten by user-form fields. The OLT-side new account password
       // is intentionally named `newPassword` to avoid collision with the
       // SSH credential `password`.
-      oltPost<{ output: string; success: boolean }>("/olt/user/add", {
-        ...credPayload(credentials),
-        ...vars,
-      }),
+      oltPost<{ output: string; success: boolean; error?: string; stepsCompleted?: number }>(
+        "/olt/user/add",
+        { ...credPayload(credentials), ...vars },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["olt", "users"] }),
   });
 }
@@ -263,10 +263,10 @@ export function useOltDeleteUser() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) =>
-      oltPost<{ output: string; success: boolean }>("/olt/user/delete", {
-        ...credPayload(credentials),
-        name,
-      }),
+      oltPost<{ output: string; success: boolean; error?: string }>(
+        "/olt/user/delete",
+        { ...credPayload(credentials), name },
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["olt", "users"] }),
   });
 }
@@ -275,10 +275,10 @@ export function useOltChangeUserPassword() {
   const { credentials } = useRouterContext();
   return useMutation({
     mutationFn: (vars: { name: string; newPassword: string }) =>
-      oltPost<{ output: string; success: boolean }>("/olt/user/password", {
-        ...credPayload(credentials),
-        ...vars,
-      }),
+      oltPost<{ output: string; success: boolean; error?: string }>(
+        "/olt/user/password",
+        { ...credPayload(credentials), ...vars },
+      ),
   });
 }
 

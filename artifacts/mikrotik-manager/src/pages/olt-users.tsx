@@ -93,7 +93,7 @@ export default function OltUsersPage() {
         setShowAdd(false);
         setForm({ ...form, name: "", newPassword: "", appendInfo: "" });
       } else {
-        toast.error(r.output || "OLT rejected the command");
+        toast.error(r.error || r.output || "OLT rejected the command");
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Add failed");
@@ -104,7 +104,7 @@ export default function OltUsersPage() {
     try {
       const r = await delM.mutateAsync(name);
       if (r.success) toast.success(`User ${name} deleted`);
-      else toast.error(r.output || "Delete failed");
+      else toast.error(r.error || r.output || "Delete failed");
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Delete failed");
     } finally {
@@ -125,7 +125,7 @@ export default function OltUsersPage() {
         setPwTarget(null);
         setNewPw("");
       } else {
-        toast.error(r.output || "Password change failed");
+        toast.error(r.error || r.output || "Password change failed");
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Password change failed");
