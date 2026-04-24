@@ -23,6 +23,7 @@ import OltDashboardPage from "@/pages/olt-dashboard";
 import OltOntsPage from "@/pages/olt-onts";
 import OltServicePortsPage from "@/pages/olt-service-ports";
 import OltAlarmsPage from "@/pages/olt-alarms";
+import OltUsersPage from "@/pages/olt-users";
 
 const queryClient = new QueryClient();
 
@@ -133,6 +134,7 @@ function AppRoutes() {
             <Route path="/onts"><ProtectedRoute component={OltOntsPage} /></Route>
             <Route path="/service-ports"><ProtectedRoute component={OltServicePortsPage} /></Route>
             <Route path="/alarms"><ProtectedRoute component={OltAlarmsPage} /></Route>
+            <Route path="/olt-users"><ProtectedRoute component={OltUsersPage} /></Route>
             {/* Block MikroTik-only paths for OLT sessions by sending them home. */}
             <Route path="/interfaces"><Redirect to="/dashboard" /></Route>
             <Route path="/ip-addresses"><Redirect to="/dashboard" /></Route>
@@ -152,6 +154,7 @@ function AppRoutes() {
             <Route path="/onts"><Redirect to="/dashboard" /></Route>
             <Route path="/service-ports"><Redirect to="/dashboard" /></Route>
             <Route path="/alarms"><Redirect to="/dashboard" /></Route>
+            <Route path="/olt-users"><Redirect to="/dashboard" /></Route>
           </>
         )}
 

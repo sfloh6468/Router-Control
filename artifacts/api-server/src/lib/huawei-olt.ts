@@ -63,6 +63,15 @@ export interface OltCreds {
 
 export interface OltSession {
   exec(command: string, opts?: { timeoutMs?: number }): Promise<string>;
+  /**
+   * Send a sequence of input lines as a single "wizard-style" command.
+   * Useful for interactive OLT prompts (e.g. `terminal user name <name>` on
+   * EA5800 firmware that asks for password / profile / re-enter count one
+   * line at a time). Lines are written sequentially with a small pause to
+   * give the OLT time to print each sub-prompt; the combined output is
+   * returned once the regular shell prompt reappears.
+   */
+  execScript(lines: string[], opts?: { timeoutMs?: number }): Promise<string>;
   close(): void;
 }
 
@@ -224,8 +233,27 @@ export async function connectOlt(creds: OltCreds): Promise<OltSession> {
     return job;
   }
 
+  function execScript(lines: string[], opts?: { timeoutMs?: number }): Promise<string> {
+    const timeoutMs = opts?.timeoutMs ?? 30000;
+    const job = chain.then(async () => {
+      for (let i = 0; i < lines.length; i++) {
+        stream.write(lines[i] + "\n");
+        if (i < lines.length - 1) {
+          await new Promise((r) => setTimeout(r, 350));
+        }
+      }
+      const raw = await readUntilPrompt(stream, timeoutMs);
+      return cleanCommandOutput(raw, lines[0] ?? "");
+    });
+    chain = job.catch(() => {
+      /* swallow so the chain stays alive for next caller */
+    });
+    return job;
+  }
+
   return {
     exec,
+    execScript,
     close() {
       try {
         stream.end();

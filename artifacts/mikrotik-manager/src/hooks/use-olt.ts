@@ -204,6 +204,114 @@ export function useOltClearAlarm() {
   });
 }
 
+// ─────────────────────────── OLT-side users & password policy ───────────────────────────
+
+export interface OltTerminalUser {
+  name: string;
+  level: string | null;
+  status: string | null;
+  reenterNum: string | null;
+  profile: string | null;
+  appendInfo: string | null;
+}
+
+export interface PasswordPolicy {
+  minLength: number | null;
+  agingDays: number | null;
+  modifyMode: string | null;
+  complexity: string | null;
+}
+
+export type OltUserLevel = "common-user" | "operator" | "administrator";
+
+export function useOltUsers() {
+  const { credentials, vendor } = useRouterContext();
+  return useQuery({
+    queryKey: ["olt", "users", credentials?.host],
+    queryFn: () =>
+      oltPost<{ users: OltTerminalUser[]; raw: string }>("/olt/users", credPayload(credentials)),
+    enabled: !!credentials && vendor === "huawei-olt",
+  });
+}
+
+export function useOltAddUser() {
+  const { credentials } = useRouterContext();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      name: string;
+      newPassword: string;
+      level: OltUserLevel;
+      profile?: string;
+      appendInfo?: string;
+      reenterNum?: number;
+    }) =>
+      // Spread vars *after* credPayload so credential fields cannot be
+      // overwritten by user-form fields. The OLT-side new account password
+      // is intentionally named `newPassword` to avoid collision with the
+      // SSH credential `password`.
+      oltPost<{ output: string; success: boolean }>("/olt/user/add", {
+        ...credPayload(credentials),
+        ...vars,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["olt", "users"] }),
+  });
+}
+
+export function useOltDeleteUser() {
+  const { credentials } = useRouterContext();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (name: string) =>
+      oltPost<{ output: string; success: boolean }>("/olt/user/delete", {
+        ...credPayload(credentials),
+        name,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["olt", "users"] }),
+  });
+}
+
+export function useOltChangeUserPassword() {
+  const { credentials } = useRouterContext();
+  return useMutation({
+    mutationFn: (vars: { name: string; newPassword: string }) =>
+      oltPost<{ output: string; success: boolean }>("/olt/user/password", {
+        ...credPayload(credentials),
+        ...vars,
+      }),
+  });
+}
+
+export function useOltPasswordPolicy() {
+  const { credentials, vendor } = useRouterContext();
+  return useQuery({
+    queryKey: ["olt", "password-policy", credentials?.host],
+    queryFn: () =>
+      oltPost<{ policy: PasswordPolicy; raw: string }>(
+        "/olt/password-policy",
+        credPayload(credentials),
+      ),
+    enabled: !!credentials && vendor === "huawei-olt",
+  });
+}
+
+export function useOltSetPasswordPolicy() {
+  const { credentials } = useRouterContext();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      minLength?: number;
+      agingDays?: number;
+      modifyMode?: "forced" | "recommended" | "none";
+    }) =>
+      oltPost<{ output: string; success: boolean }>("/olt/password-policy/set", {
+        ...credPayload(credentials),
+        ...vars,
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["olt", "password-policy"] }),
+  });
+}
+
 export function useOltCommand() {
   const { credentials } = useRouterContext();
   return useMutation({

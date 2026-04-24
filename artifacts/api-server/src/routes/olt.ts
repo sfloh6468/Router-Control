@@ -634,6 +634,321 @@ router.post("/olt/alarm/clear", ...requireWriter(), async (req, res): Promise<vo
   }
 });
 
+// ─────────────────────────── OLT-SIDE USERS ───────────────────────────
+//
+// `(config)# terminal user name <name>` and friends manage CLI accounts on
+// the OLT itself. The list endpoint runs `display terminal user all` and
+// parses its (often multi-line) layout into structured rows. Mutating
+// endpoints are writer-gated and run inside config mode.
+
+interface OltTerminalUser {
+  name: string;
+  level: string | null;       // Common-User / Operator / Administrator
+  status: string | null;      // enable / disable
+  reenterNum: string | null;  // max simultaneous logins
+  profile: string | null;     // assigned profile name (if any)
+  appendInfo: string | null;  // descriptive text (if any)
+}
+
+/**
+ * `display terminal user all` on EA5800 firmware comes in two shapes:
+ *
+ *   (A) Tabular — single row per user:
+ *     "  User-name  Status  Level         Reenter-num  Online ..."
+ *     "  root      enable  Administrator 4            yes     ..."
+ *
+ *   (B) Block per user (one User-name per multi-line stanza):
+ *     "  User-name        : root"
+ *     "  User-level       : Administrator"
+ *     "  Reenter-num      : 4"
+ *     ...
+ *
+ * We try the block form first (more reliable when the table wraps), then
+ * fall back to a permissive table parser.
+ */
+function parseTerminalUsers(text: string): OltTerminalUser[] {
+  const out: OltTerminalUser[] = [];
+
+  // (B) Block-per-user form.
+  let cur: OltTerminalUser | null = null;
+  const flush = () => {
+    if (cur && cur.name) out.push(cur);
+    cur = null;
+  };
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    const nameM = line.match(/^\s*User[-\s]?name\s*[:=]\s*(\S+)/i);
+    if (nameM) {
+      flush();
+      cur = {
+        name: nameM[1],
+        level: null,
+        status: null,
+        reenterNum: null,
+        profile: null,
+        appendInfo: null,
+      };
+      continue;
+    }
+    if (!cur) continue;
+    const lvl = line.match(/^\s*User[-\s]?level\s*[:=]\s*(.+)$/i);
+    if (lvl) cur.level = lvl[1].trim();
+    const st = line.match(/^\s*(?:User[-\s]?)?(?:Status|State)\s*[:=]\s*(\S+)/i);
+    if (st) cur.status = st[1];
+    const rn = line.match(/^\s*Re[-\s]?enter[-\s]?num\s*[:=]\s*(\S+)/i);
+    if (rn) cur.reenterNum = rn[1];
+    const pf = line.match(/^\s*Profile(?:\s+name)?\s*[:=]\s*(.+)$/i);
+    if (pf) cur.profile = pf[1].trim();
+    const ai = line.match(/^\s*Append[-\s]?info\s*[:=]\s*(.+)$/i);
+    if (ai) cur.appendInfo = ai[1].trim();
+  }
+  flush();
+  if (out.length > 0) return out;
+
+  // (A) Tabular fallback.
+  for (const raw of text.split("\n")) {
+    const line = raw.trimEnd();
+    if (!line || /^[-=\s]+$/.test(line)) continue;
+    if (/^\s*User[-\s]?name\b/i.test(line)) continue; // header
+    // name  status  level  reenter ...
+    const m = line.match(
+      /^\s*([A-Za-z0-9_\-]{1,32})\s+(enable|disable)\s+(\S+)\s+(\d+)/i,
+    );
+    if (m) {
+      out.push({
+        name: m[1],
+        status: m[2],
+        level: m[3],
+        reenterNum: m[4],
+        profile: null,
+        appendInfo: null,
+      });
+    }
+  }
+  return out;
+}
+
+router.post("/olt/users", async (req, res): Promise<void> => {
+  const creds = parseCreds(req, res);
+  if (!creds) return;
+  try {
+    const data = await withOlt(creds, async (s) => {
+      const text = await safeExec(s, "display terminal user all");
+      return { users: parseTerminalUsers(text), raw: text };
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(400).json({ error: errMsg(err) });
+  }
+});
+
+// Strict whitelists — these run inside writer-gated config mode where any
+// stray character could become an additional CLI argument.
+const OltUserName = z.string().regex(/^[A-Za-z0-9_\-]{1,32}$/);
+const OltUserPassword = z.string().regex(/^[\x21-\x7E]{6,64}$/);
+const OltUserLevel = z.enum(["common-user", "operator", "administrator"]);
+const OltProfileName = z.string().regex(/^[A-Za-z0-9_\-]{1,32}$/).optional();
+const OltAppendInfo = z.string().regex(/^[A-Za-z0-9_\-. ]{0,64}$/).optional();
+const OltReenterNum = z.coerce.number().int().min(1).max(8).optional();
+
+// `newPassword` (not `password`) so the new account password never collides
+// with the SSH credentials carried in the same request body.
+const AddUserBody = Creds.extend({
+  name: OltUserName,
+  newPassword: OltUserPassword,
+  level: OltUserLevel,
+  profile: OltProfileName,
+  appendInfo: OltAppendInfo,
+  reenterNum: OltReenterNum,
+});
+
+router.post("/olt/user/add", ...requireWriter(), async (req, res): Promise<void> => {
+  const parsed = AddUserBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const d = parsed.data;
+  try {
+    const out = await withOlt(
+      { host: d.host, port: d.port, username: d.username, password: d.password },
+      async (s) => {
+        await s.exec("config");
+        // EA5800 firmwares treat `terminal user name <name>` as an interactive
+        // wizard. We feed the answers in order: password, confirm password,
+        // user level, profile (or '-' to skip), append info, reenter-num.
+        // Any line the OLT does not actually prompt for is harmless because
+        // we don't issue further commands until we see the regular prompt.
+        const wizardOut = await s.execScript([
+          `terminal user name ${d.name}`,
+          d.newPassword,
+          d.newPassword,
+          d.level,
+          d.profile ?? "root",
+          d.appendInfo ?? "-",
+          String(d.reenterNum ?? 4),
+        ], { timeoutMs: 20000 });
+        await s.exec("quit");
+        // Treat common error tokens as failure even if the wizard exited
+        // back to a prompt. Otherwise success is best-effort.
+        const failed = /(failure|failed|invalid|error|already exist|denied)/i.test(wizardOut);
+        return { output: wizardOut, success: !failed };
+      },
+    );
+    res.json(out);
+  } catch (err) {
+    res.status(400).json({ success: false, error: errMsg(err) });
+  }
+});
+
+const DelUserBody = Creds.extend({ name: OltUserName });
+
+router.post("/olt/user/delete", ...requireWriter(), async (req, res): Promise<void> => {
+  const parsed = DelUserBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const d = parsed.data;
+  try {
+    const result = await withOlt(
+      { host: d.host, port: d.port, username: d.username, password: d.password },
+      async (s) => {
+        await s.exec("config");
+        // Some EA5800 firmwares prompt "Are you sure to delete? (y/n)" — we
+        // pre-answer 'y' via the wizard helper.
+        const out = await s.execScript([
+          `undo terminal user name ${d.name}`,
+          "y",
+        ], { timeoutMs: 15000 });
+        await s.exec("quit");
+        const failed = /(failure|failed|invalid|error|does not exist|denied|cannot)/i.test(out);
+        return { output: out, success: !failed };
+      },
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, error: errMsg(err) });
+  }
+});
+
+const ChangePwBody = Creds.extend({
+  name: OltUserName,
+  newPassword: OltUserPassword,
+});
+
+router.post("/olt/user/password", ...requireWriter(), async (req, res): Promise<void> => {
+  const parsed = ChangePwBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const d = parsed.data;
+  try {
+    const result = await withOlt(
+      { host: d.host, port: d.port, username: d.username, password: d.password },
+      async (s) => {
+        await s.exec("config");
+        // `terminal user password <name>` opens a small wizard prompting
+        // for the new password twice. On firmwares that don't accept the
+        // username argument the same wizard is reachable via
+        // `terminal user password` (which targets the *current* user) — we
+        // try the explicit form first.
+        const out = await s.execScript([
+          `terminal user password ${d.name}`,
+          d.newPassword,
+          d.newPassword,
+        ], { timeoutMs: 15000 });
+        await s.exec("quit");
+        const failed = /(failure|failed|invalid|error|denied|does not exist|too\s+(short|simple|weak))/i.test(out);
+        return { output: out, success: !failed };
+      },
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, error: errMsg(err) });
+  }
+});
+
+// ─────────────────────────── PASSWORD POLICY ───────────────────────────
+
+interface PasswordPolicy {
+  minLength: number | null;
+  agingDays: number | null;
+  modifyMode: string | null;     // forced | recommended | none
+  complexity: string | null;     // free-form description if firmware reports it
+}
+
+function parsePasswordPolicy(text: string): PasswordPolicy {
+  const num = (re: RegExp): number | null => {
+    const m = text.match(re);
+    if (!m) return null;
+    const n = parseInt(m[1], 10);
+    return Number.isFinite(n) ? n : null;
+  };
+  const str = (re: RegExp): string | null => {
+    const m = text.match(re);
+    return m ? m[1].trim() : null;
+  };
+  return {
+    minLength: num(/(?:Minimum|Min(?:imum)?)\s+(?:password\s+)?length\s*[:=]\s*(\d+)/i),
+    agingDays: num(/Aging[-\s]?(?:time|days?)\s*[:=]\s*(\d+)/i),
+    modifyMode: str(/Modify[-\s]?mode\s*[:=]\s*(\S+)/i),
+    complexity: str(/Complexity(?:\s+check)?\s*[:=]\s*([^\r\n]+)/i),
+  };
+}
+
+router.post("/olt/password-policy", async (req, res): Promise<void> => {
+  const creds = parseCreds(req, res);
+  if (!creds) return;
+  try {
+    const data = await withOlt(creds, async (s) => {
+      const text = await safeExec(s, "display terminal user password configuration");
+      return { policy: parsePasswordPolicy(text), raw: text };
+    });
+    res.json(data);
+  } catch (err) {
+    res.status(400).json({ error: errMsg(err) });
+  }
+});
+
+const SetPolicyBody = Creds.extend({
+  minLength: z.coerce.number().int().min(1).max(32).optional(),
+  agingDays: z.coerce.number().int().min(0).max(999).optional(),
+  modifyMode: z.enum(["forced", "recommended", "none"]).optional(),
+});
+
+router.post("/olt/password-policy/set", ...requireWriter(), async (req, res): Promise<void> => {
+  const parsed = SetPolicyBody.safeParse(req.body);
+  if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+  const d = parsed.data;
+  if (d.minLength == null && d.agingDays == null && d.modifyMode == null) {
+    res.status(400).json({ error: "Provide at least one policy field to update" });
+    return;
+  }
+  try {
+    const result = await withOlt(
+      { host: d.host, port: d.port, username: d.username, password: d.password },
+      async (s) => {
+        await s.exec("config");
+        const outputs: string[] = [];
+        if (d.minLength != null) {
+          outputs.push(await s.exec(`terminal user password length ${d.minLength}`));
+        }
+        if (d.agingDays != null) {
+          outputs.push(await s.exec(`terminal user password aging-time ${d.agingDays}`));
+        }
+        if (d.modifyMode) {
+          outputs.push(
+            await s.execScript(
+              [`terminal user password modify-mode ${d.modifyMode}`, "y"],
+              { timeoutMs: 10000 },
+            ),
+          );
+        }
+        await s.exec("quit");
+        const combined = outputs.join("\n---\n");
+        const failed = /(failure|failed|invalid|error|denied)/i.test(combined);
+        return { output: combined, success: !failed };
+      },
+    );
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ success: false, error: errMsg(err) });
+  }
+});
+
 // ─────────────────────────── COMMAND (terminal) ───────────────────────────
 
 const CommandBody = Creds.extend({

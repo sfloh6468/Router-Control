@@ -16,6 +16,7 @@ import {
   Cable,
   AlertOctagon,
   Plug,
+  Users,
 } from "lucide-react";
 import { useClerk, useUser, Show } from "@clerk/react";
 import { useRouterContext } from "@/lib/router-context";
@@ -40,6 +41,7 @@ const oltNav = [
   { name: "ONUs", href: "/onts", icon: Cable },
   { name: "Service Ports", href: "/service-ports", icon: Plug },
   { name: "Alarms", href: "/alarms", icon: AlertOctagon },
+  { name: "OLT Users", href: "/olt-users", icon: Users },
   { name: "Terminal", href: "/terminal", icon: TerminalSquare },
 ];
 
