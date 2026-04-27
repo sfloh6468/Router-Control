@@ -7,7 +7,9 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { and, eq, ilike, desc, sql } from "drizzle-orm";
-import { db, oltLoginEventsTable } from "@workspace/db";
+import { db, pool, oltLoginEventsTable, type PoolClient } from "@workspace/db";
+import QueryStream from "pg-query-stream";
+import { once } from "node:events";
 import { requireUser, requireWriter } from "../middlewares/requireAuth";
 import {
   withOlt,
@@ -1513,14 +1515,25 @@ router.get("/olt/login-history", async (req, res): Promise<void> => {
 
 // CSV export of the same filtered set the GET endpoint serves. Lets ops hand
 // raw rows to security / compliance reviewers without paginating through the
-// UI. Same auth as GET (any authed user — read-only is allowed). The cap is
-// generous (100k rows) so a normal year of audit data fits in one download
-// while still bounding worst-case memory.
+// UI. Same auth as GET (any authed user — read-only is allowed).
+//
+// Unlike the JSON endpoint, this route streams rows from Postgres straight
+// to the response body via a server-side cursor, so memory stays flat
+// regardless of result size. There is no implicit row cap; callers may
+// still pass `limit` to truncate, with a defensive ceiling of 10M to bound
+// worst-case query time.
 const CsvQuery = HistoryQuery.extend({
-  // Override default 200 with a much larger ceiling for export use; callers
-  // can still pass a smaller `limit` to truncate.
-  limit: z.coerce.number().int().positive().max(100_000).default(100_000),
+  // Optional. Omit for "everything that matches the filters".
+  limit: z.coerce.number().int().positive().max(10_000_000).optional(),
+  // Pagination offset is meaningless for a full export; default to 0 and
+  // accept it only for edge-case callers who want to skip a known prefix.
+  offset: z.coerce.number().int().nonnegative().default(0),
 });
+
+// How many rows the cursor pulls per network round-trip. Larger = fewer
+// round-trips but more memory per batch. 1000 keeps batch memory in the
+// low-MB range for our row size (~10 short text cols + 2 timestamps).
+const CSV_CURSOR_BATCH = 1000;
 
 // Characters that, when leading a CSV cell, are interpreted as formulas by
 // Excel / Google Sheets / LibreOffice. An attacker who can inject one of
@@ -1568,68 +1581,156 @@ router.get("/olt/login-history.csv", async (req, res): Promise<void> => {
   if (fromDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) >= ${fromDate}`);
   if (toDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) <= ${toDate}`);
 
+  // Build the parameterized SELECT through Drizzle so the WHERE/ORDER BY
+  // logic stays identical to the JSON endpoint, then hand the resulting
+  // SQL + params to a raw pg cursor for true row-by-row streaming.
+  const where = conds.length === 1 ? conds[0] : and(...conds);
+  let builder = db
+    .select()
+    .from(oltLoginEventsTable)
+    .where(where)
+    .orderBy(
+      sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) desc nulls last`,
+      desc(oltLoginEventsTable.id),
+    )
+    .$dynamic();
+  if (q.limit !== undefined) builder = builder.limit(q.limit);
+  if (q.offset > 0) builder = builder.offset(q.offset);
+  const { sql: queryText, params } = builder.toSQL();
+
+  // Build a stable, archival filename: olt-login-history__<host>__<from>_<to>.csv
+  const hostPart = safeFilenamePart(q.host ?? "all-hosts");
+  const fromPart = safeFilenamePart(q.from ?? "earliest");
+  const toPart = safeFilenamePart(q.to ?? "latest");
+  const filename = `olt-login-history__${hostPart}__${fromPart}_${toPart}.csv`;
+
+  // Acquire a dedicated client up front. Cursors only work within a single
+  // connection, so we cannot use the pool's auto-checkout convenience here.
+  let client: PoolClient;
   try {
-    const where = conds.length === 1 ? conds[0] : and(...conds);
-    const rows = await db
-      .select()
-      .from(oltLoginEventsTable)
-      .where(where)
-      .orderBy(
-        sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) desc nulls last`,
-        desc(oltLoginEventsTable.id),
-      )
-      .limit(q.limit)
-      .offset(q.offset);
-
-    // Build a stable, archival filename: olt-login-history__<host>__<from>_<to>.csv
-    const hostPart = safeFilenamePart(q.host ?? "all-hosts");
-    const fromPart = safeFilenamePart(q.from ?? "earliest");
-    const toPart = safeFilenamePart(q.to ?? "latest");
-    const filename = `olt-login-history__${hostPart}__${fromPart}_${toPart}.csv`;
-
-    res.setHeader("Content-Type", "text/csv; charset=utf-8");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="${filename}"`,
-    );
-    res.setHeader("Cache-Control", "no-store");
-
-    // Header row (UTF-8 BOM up front so Excel opens it correctly).
-    res.write("\uFEFF");
-    res.write(
-      [
-        "host",
-        "username",
-        "source_ip",
-        "channel",
-        "login_at",
-        "logout_at",
-        "result",
-        "seen_at",
-      ].map(csvField).join(",") + "\r\n",
-    );
-    for (const r of rows) {
-      res.write(
-        [
-          csvField(r.host),
-          csvField(r.username),
-          csvField(r.sourceIp),
-          csvField(r.channel),
-          csvField(r.loginAt ? r.loginAt.toISOString() : r.loginAtRaw),
-          csvField(r.logoutAt ? r.logoutAt.toISOString() : r.logoutAtRaw),
-          csvField(r.result),
-          csvField(r.seenAt.toISOString()),
-        ].join(",") + "\r\n",
-      );
-    }
-    res.end();
+    client = await pool.connect();
   } catch (err) {
-    // Headers may already be sent; if so, just terminate. Otherwise return JSON.
-    if (res.headersSent) {
-      res.end();
-    } else {
-      res.status(500).json({ error: errMsg(err) });
+    res.status(500).json({ error: errMsg(err) });
+    return;
+  }
+
+  // From here on, headers will be flushed almost immediately. Any failure
+  // mid-stream cannot be reported as JSON — the best we can do is destroy
+  // the response so the browser sees a truncated download (and we log it
+  // server-side via the route's error handler).
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Cache-Control", "no-store");
+  // Force chunked transfer; we don't know the total length up front.
+  res.setHeader("Transfer-Encoding", "chunked");
+
+  // Header row (UTF-8 BOM up front so Excel opens it correctly).
+  res.write("\uFEFF");
+  res.write(
+    [
+      "host",
+      "username",
+      "source_ip",
+      "channel",
+      "login_at",
+      "logout_at",
+      "result",
+      "seen_at",
+    ].map(csvField).join(",") + "\r\n",
+  );
+
+  // pg-query-stream returns rows with the *database* column names
+  // (snake_case), not Drizzle's camelCase field names, since we bypass
+  // the ORM's row decoder. Define a narrow shape so this layer is
+  // type-safe without re-deriving from the Drizzle schema.
+  type CsvRow = {
+    host: string;
+    username: string;
+    source_ip: string | null;
+    channel: string;
+    login_at: Date | null;
+    login_at_raw: string;
+    logout_at: Date | null;
+    logout_at_raw: string | null;
+    result: string;
+    seen_at: Date;
+  };
+
+  // Track whether the HTTP client has gone away. We need this for two
+  // reasons: (a) so a `drain` await doesn't hang forever if the socket
+  // closes mid-write, and (b) so we tear down the cursor instead of
+  // pulling rows nobody will read.
+  let aborted = false;
+  let dbStream: QueryStream | null = null;
+  const onClientAbort = () => {
+    aborted = true;
+    if (dbStream) dbStream.destroy();
+  };
+  res.on("close", onClientAbort);
+
+  try {
+    dbStream = new QueryStream(queryText, params, {
+      batchSize: CSV_CURSOR_BATCH,
+    });
+    // `client.query(queryStream)` is the canonical pg-query-stream invocation
+    // — it wires the cursor into the live connection. The return value here
+    // is the same QueryStream instance (typed `void` by node-pg's callback
+    // overload), so we keep our existing reference.
+    client.query(dbStream);
+
+    for await (const raw of dbStream as unknown as AsyncIterable<CsvRow>) {
+      if (aborted) break;
+      const line =
+        [
+          csvField(raw.host),
+          csvField(raw.username),
+          csvField(raw.source_ip),
+          csvField(raw.channel),
+          csvField(raw.login_at ? raw.login_at.toISOString() : raw.login_at_raw),
+          csvField(raw.logout_at ? raw.logout_at.toISOString() : raw.logout_at_raw),
+          csvField(raw.result),
+          csvField(raw.seen_at.toISOString()),
+        ].join(",") + "\r\n";
+      // Honor backpressure: if the socket buffer is full, wait for it to
+      // drain before pulling the next row from Postgres. Without this
+      // guard a slow client lets node's internal write buffer balloon
+      // — defeating the whole point of streaming.
+      //
+      // We race `drain` against `close`/`error` so a client that gives
+      // up mid-stream cannot leave us waiting on a `drain` event that
+      // will never come (which would hold the pool client open
+      // indefinitely). `Promise.race` resolves on the first of the
+      // three; the other listeners are then garbage-collected by node.
+      if (!res.write(line)) {
+        await Promise.race([
+          once(res, "drain"),
+          once(res, "close"),
+          once(res, "error"),
+        ]);
+        if (aborted) break;
+      }
     }
+    if (!aborted) res.end();
+  } catch (err) {
+    // Mid-stream failure (DB error, broken pipe, etc.). Headers are
+    // already on the wire, so the best signal we can give the client
+    // is an abrupt connection close — better than silently truncating
+    // and pretending the export succeeded. If the client was the one
+    // that disconnected, downgrade to a debug log to avoid noise.
+    if (aborted) {
+      console.warn("[olt csv export] aborted by client mid-stream");
+    } else {
+      console.error("[olt csv export] stream error:", errMsg(err));
+      res.destroy(err instanceof Error ? err : new Error(errMsg(err)));
+    }
+  } finally {
+    res.off("close", onClientAbort);
+    // Destroying the cursor returns the underlying connection to a
+    // usable state before we release it back to the pool. If the
+    // cursor was never created (acquire failed earlier in try) this
+    // is a no-op.
+    if (dbStream && !dbStream.destroyed) dbStream.destroy();
+    client.release();
   }
 });
 

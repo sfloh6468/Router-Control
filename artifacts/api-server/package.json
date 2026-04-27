@@ -21,6 +21,7 @@
     "express": "^5",
     "google-auth-library": "^10.6.2",
     "http-proxy-middleware": "^3.0.5",
+    "pg-query-stream": "^4.14.0",
     "routeros-client": "^1.1.2",
     "ssh2": "^1.17.0",
     "zod": "catalog:"

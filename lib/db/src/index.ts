@@ -4,6 +4,10 @@ import * as schema from "./schema";
 
 const { Pool } = pg;
 
+// Re-exported so downstream packages (e.g. @workspace/api-server) can type
+// `pool.connect()` results without taking a direct dependency on `pg`.
+export type { PoolClient } from "pg";
+
 if (!process.env.DATABASE_URL) {
   throw new Error(
     "DATABASE_URL must be set. Did you forget to provision a database?",
