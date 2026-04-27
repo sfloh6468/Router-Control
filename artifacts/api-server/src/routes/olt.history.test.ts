@@ -23,7 +23,7 @@ import {
   type HistoryFilters,
 } from "./olt.js";
 import { db, oltLoginEventsTable } from "@workspace/db";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 const USER = "user_test_123";
 
@@ -175,6 +175,81 @@ test("neither route handler re-inlines per-filter WHERE conditions", () => {
   assert.match(jsonBody, /\bbuildHistorySelect\(\s*userId\s*,/, "JSON handler should call buildHistorySelect");
   assert.match(csvBody, /\bbuildHistorySelect\(\s*userId\s*,/, "CSV handler should call buildHistorySelect");
 });
+
+// ─── Endpoint-level row-parity integration test ──────────────────────────
+//
+// Hits the real DB through the same builder both routes use: seeds a
+// known-shaped batch of events under a throwaway owner, then exercises
+// the JSON-route pattern (`buildHistorySelect(...).limit(N).offset(0)`)
+// and the CSV-route pattern (`buildHistorySelect(...)` with no LIMIT)
+// against the live Postgres. Asserts the returned row IDs are
+// identical, in order, for every filter combination — the actual
+// guarantee Task #16 is meant to provide. Always cleans up in finally
+// so even a failure leaves no residue.
+//
+// Skipped automatically when DATABASE_URL isn't set (e.g. a contributor
+// running the unit-only subset).
+const HAS_DB = Boolean(process.env.DATABASE_URL);
+test(
+  "endpoint-level row parity: JSON and CSV return identical IDs for the same filters",
+  { skip: HAS_DB ? false : "DATABASE_URL not set" },
+  async () => {
+    const owner = `test_parity_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const seed = [
+      { ownerUserId: owner, host: "olt-A", username: "alice", sourceIp: "10.0.0.1", channel: "ssh",     loginAtRaw: "2026-04-01 10:00:00", loginAt: new Date("2026-04-01T10:00:00Z"), result: "success" },
+      { ownerUserId: owner, host: "olt-A", username: "bob",   sourceIp: "10.0.0.2", channel: "telnet",  loginAtRaw: "2026-04-05 11:00:00", loginAt: new Date("2026-04-05T11:00:00Z"), result: "success" },
+      { ownerUserId: owner, host: "olt-A", username: "alice", sourceIp: "10.0.0.3", channel: "ssh",     loginAtRaw: "2026-04-10 12:00:00", loginAt: new Date("2026-04-10T12:00:00Z"), result: "fail"    },
+      { ownerUserId: owner, host: "olt-B", username: "alice", sourceIp: "192.168.1.5", channel: "console", loginAtRaw: "2026-04-15 13:00:00", loginAt: new Date("2026-04-15T13:00:00Z"), result: "success" },
+      { ownerUserId: owner, host: "olt-B", username: "carol", sourceIp: "192.168.1.7", channel: "ssh",   loginAtRaw: "2026-04-20 14:00:00", loginAt: new Date("2026-04-20T14:00:00Z"), result: "success" },
+      { ownerUserId: owner, host: "olt-B", username: "carol", sourceIp: "192.168.1.7", channel: "ssh",   loginAtRaw: "2026-04-25 15:00:00", loginAt: new Date("2026-04-25T15:00:00Z"), result: "fail"    },
+    ];
+
+    try {
+      await db.insert(oltLoginEventsTable).values(seed);
+
+      // Each entry: a filter set the UI might submit, then a check that
+      // the JSON-route SELECT and the CSV-route SELECT return exactly
+      // the same row IDs in the same order.
+      const cases: { name: string; filters: HistoryFilters }[] = [
+        { name: "no filters", filters: { fromDate: null, toDate: null } },
+        { name: "host=olt-A",  filters: { host: "olt-A", fromDate: null, toDate: null } },
+        { name: "username=alice", filters: { username: "alice", fromDate: null, toDate: null } },
+        { name: "channel=SSH (case-insensitive lowercased by helper)", filters: { channel: "SSH", fromDate: null, toDate: null } },
+        { name: "result=fail", filters: { result: "fail", fromDate: null, toDate: null } },
+        { name: "sourceIp substring 10.0.", filters: { sourceIp: "10.0.", fromDate: null, toDate: null } },
+        {
+          name: "date range 2026-04-05..2026-04-20",
+          filters: {
+            fromDate: new Date("2026-04-05T00:00:00Z"),
+            toDate: new Date("2026-04-20T23:59:59Z"),
+          },
+        },
+        {
+          name: "compound: host=olt-B + result=success",
+          filters: { host: "olt-B", result: "success", fromDate: null, toDate: null },
+        },
+      ];
+
+      for (const c of cases) {
+        // JSON endpoint pattern: paginated, default limit=200 / offset=0.
+        const jsonRows = await buildHistorySelect(owner, c.filters).limit(200).offset(0);
+        // CSV endpoint pattern: no implicit LIMIT/OFFSET (full export).
+        const csvRows = await buildHistorySelect(owner, c.filters);
+        const jsonIds = jsonRows.map((r) => r.id);
+        const csvIds = csvRows.map((r) => r.id);
+        assert.deepEqual(
+          csvIds,
+          jsonIds,
+          `[${c.name}] CSV row IDs (${csvIds.join(",")}) must match JSON row IDs (${jsonIds.join(",")}) exactly and in order`,
+        );
+      }
+    } finally {
+      // Always clean up the throwaway rows, even on assertion failure.
+      // Scoped to our unique owner so we can't touch real data.
+      await db.delete(oltLoginEventsTable).where(eq(oltLoginEventsTable.ownerUserId, owner));
+    }
+  },
+);
 
 test("JSON-list and CSV-stream callers produce identical filter SQL+params", () => {
   // Same filter set the user types into the UI's filter bar.
