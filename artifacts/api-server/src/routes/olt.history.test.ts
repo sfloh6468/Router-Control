@@ -12,6 +12,9 @@
 //
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
 import {
   parseHistoryFilters,
@@ -111,6 +114,66 @@ test("buildHistorySelect applies the canonical history ORDER BY", () => {
   // tiebreaker so paged results are deterministic.
   assert.match(text, /order by\s+coalesce\("olt_login_events"\."login_at",\s*"olt_login_events"\."logout_at"\)\s+desc nulls last/i);
   assert.match(text, /"olt_login_events"\."id"\s+desc/i);
+});
+
+// Source-level guard: catches the regression mode the helper-call tests
+// can't — someone adding a new condition by re-inlining a bespoke WHERE
+// clause inside one of the route handlers instead of editing
+// `historyWhere`. We parse out each handler's body and assert that
+// neither contains a hand-written `eq(oltLoginEventsTable.<col>, ...)`
+// or `ilike(...)` for a filterable column. The only legitimate place
+// those Drizzle filter primitives are allowed for `oltLoginEventsTable`
+// is inside `historyWhere` itself.
+test("neither route handler re-inlines per-filter WHERE conditions", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const src = readFileSync(join(here, "olt.ts"), "utf8");
+
+  function bodyOf(routePathLiteral: string): string {
+    const startMarker = `router.get("${routePathLiteral}",`;
+    const start = src.indexOf(startMarker);
+    assert.ok(start >= 0, `could not locate route handler for ${routePathLiteral}`);
+    // Walk braces to find the handler body's matching close-brace.
+    const bodyOpen = src.indexOf("{", start);
+    let depth = 0;
+    let i = bodyOpen;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (c === "{") depth++;
+      else if (c === "}") {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    return src.slice(bodyOpen, i + 1);
+  }
+
+  const jsonBody = bodyOf("/olt/login-history");
+  const csvBody = bodyOf("/olt/login-history.csv");
+
+  // Per-filter primitives that historyWhere uses internally. If a route
+  // body contains one of these for the events table, someone re-inlined.
+  const forbidden = [
+    /eq\(\s*oltLoginEventsTable\.host\b/,
+    /eq\(\s*oltLoginEventsTable\.username\b/,
+    /ilike\(\s*oltLoginEventsTable\.sourceIp\b/,
+    /eq\(\s*oltLoginEventsTable\.channel\b/,
+    /eq\(\s*oltLoginEventsTable\.result\b/,
+  ];
+  for (const pat of forbidden) {
+    assert.ok(
+      !pat.test(jsonBody),
+      `JSON history handler must not re-inline filter ${pat}; call historyWhere/buildHistorySelect instead`,
+    );
+    assert.ok(
+      !pat.test(csvBody),
+      `CSV history handler must not re-inline filter ${pat}; call historyWhere/buildHistorySelect instead`,
+    );
+  }
+
+  // Both handlers must actually invoke the shared helpers.
+  assert.match(jsonBody, /\bhistoryWhere\(\s*userId\s*,/, "JSON handler should call historyWhere");
+  assert.match(jsonBody, /\bbuildHistorySelect\(\s*userId\s*,/, "JSON handler should call buildHistorySelect");
+  assert.match(csvBody, /\bbuildHistorySelect\(\s*userId\s*,/, "CSV handler should call buildHistorySelect");
 });
 
 test("JSON-list and CSV-stream callers produce identical filter SQL+params", () => {

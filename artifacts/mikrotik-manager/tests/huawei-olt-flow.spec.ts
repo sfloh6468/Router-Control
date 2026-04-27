@@ -163,7 +163,7 @@ test.describe("Huawei OLT vendor flow", () => {
     await installChatMock(page, captured);
 
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: /Network Device Manager/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /RouteManager/i })).toBeVisible();
 
     const mikrotikBtn = page.getByRole("button", { name: "MikroTik" });
     const oltBtn = page.getByRole("button", { name: "Huawei OLT" });
@@ -221,7 +221,7 @@ test.describe("Huawei OLT vendor flow", () => {
     await installBackendMocks(context);
 
     await page.goto("/");
-    await expect(page.getByRole("heading", { name: /Network Device Manager/i })).toBeVisible();
+    await expect(page.getByRole("heading", { name: /RouteManager/i })).toBeVisible();
 
     const mikrotikBtn = page.getByRole("button", { name: "MikroTik" });
     const oltBtn = page.getByRole("button", { name: "Huawei OLT" });
