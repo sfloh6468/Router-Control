@@ -448,6 +448,66 @@ export function useOltPurgeLoginHistory() {
   });
 }
 
+// ─────────────────────────── Login alerts ───────────────────────────
+
+export type OltLoginAlertKind = "ip_burst" | "user_burst" | "off_hours";
+
+export interface OltLoginAlert {
+  kind: OltLoginAlertKind;
+  host: string;
+  scopeKey: string;
+  scopeLabel: string;
+  count: number;
+  firstAt: string;
+  lastAt: string;
+  sampleIds: number[];
+  acknowledged: boolean;
+  acknowledgedAt: string | null;
+}
+
+export interface OltLoginAlertsResponse {
+  alerts: OltLoginAlert[];
+  activeCount: number;
+  windowMinutes: number;
+  threshold: number;
+  lookbackHours: number;
+  businessHoursStart: number;
+  businessHoursEnd: number;
+}
+
+/**
+ * Polled aggregate of suspicious sign-in patterns over the last 24h. Cheap
+ * to call (single SQL roll-up) so the OLT Users page can refetch every
+ * minute and surface fresh alerts without manual refresh.
+ */
+export function useOltLoginAlerts(opts?: { host?: string; enabled?: boolean }) {
+  const { credentials } = useRouterContext();
+  const host = opts?.host ?? credentials?.host;
+  return useQuery({
+    queryKey: ["olt", "login-alerts", host],
+    queryFn: () => oltGet<OltLoginAlertsResponse>("/olt/login-alerts", { host }),
+    enabled: opts?.enabled !== false,
+    refetchInterval: 60_000,
+  });
+}
+
+export function useAcknowledgeOltLoginAlert() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (vars: {
+      kind: OltLoginAlertKind;
+      host: string;
+      scopeKey: string;
+      watermarkAt: string;
+    }) =>
+      oltPost<{ success: boolean; id: number | null; watermarkAt: string }>(
+        "/olt/login-alerts/acknowledge",
+        vars,
+      ),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["olt", "login-alerts"] }),
+  });
+}
+
 export function useOltKickUser() {
   const { credentials } = useRouterContext();
   const qc = useQueryClient();

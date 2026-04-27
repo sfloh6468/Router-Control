@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Users, RefreshCw, Plus, Trash2, X, KeyRound, ShieldCheck, History, LogOut, Circle, Database, Radio, Download } from "lucide-react";
+import { Users, RefreshCw, Plus, Trash2, X, KeyRound, ShieldCheck, History, LogOut, Circle, Database, Radio, Download, AlertTriangle, Check } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,11 +14,14 @@ import {
   useOltKickUser,
   useOltLoginHistory,
   useOltPurgeLoginHistory,
+  useOltLoginAlerts,
+  useAcknowledgeOltLoginAlert,
   buildOltLoginHistoryCsvUrl,
   type OltUserLevel,
   type OltUserSession,
   type OltLoginHistoryEvent,
   type OltLoginHistoryFilters,
+  type OltLoginAlert,
 } from "@/hooks/use-olt";
 import { useMe } from "@/hooks/use-admin";
 import { useRouterContext } from "@/lib/router-context";
@@ -425,6 +428,8 @@ export default function OltUsersPage() {
           </div>
         )}
       </Card>
+
+      <LoginAlertsBanner canWrite={canWrite} />
 
       <RecentLoginsCard
         canWrite={canWrite}
@@ -987,6 +992,135 @@ function Field({
         className="font-mono"
       />
     </div>
+  );
+}
+
+function alertKindLabel(kind: OltLoginAlert["kind"]): string {
+  switch (kind) {
+    case "ip_burst": return "Failed-login burst from IP";
+    case "user_burst": return "Failed-login burst on username";
+    case "off_hours": return "Failed login outside business hours";
+  }
+}
+
+/**
+ * Banner above the Recent Logins card that surfaces brute-force / off-hours
+ * patterns derived from `olt_login_events`. Polls every minute via
+ * `useOltLoginAlerts`. Writers see a Dismiss button per alert; the dismissal
+ * records a watermark, so an alert reappears only when newer matching events
+ * arrive (no silent suppression of fresh attack waves).
+ */
+function LoginAlertsBanner({ canWrite }: { canWrite: boolean }) {
+  const alertsQ = useOltLoginAlerts();
+  const ackM = useAcknowledgeOltLoginAlert();
+  const [showDismissed, setShowDismissed] = useState(false);
+
+  if (alertsQ.isLoading) return null;
+  if (alertsQ.isError) {
+    return (
+      <Card className="p-4 border-destructive/40 bg-destructive/10 text-sm text-destructive">
+        Failed to load login alerts:{" "}
+        {alertsQ.error instanceof Error ? alertsQ.error.message : "unknown error"}
+      </Card>
+    );
+  }
+
+  const data = alertsQ.data;
+  if (!data) return null;
+  const alerts = data.alerts ?? [];
+  const active = alerts.filter((a) => !a.acknowledged);
+  if (active.length === 0 && !showDismissed) {
+    return null;
+  }
+
+  const visible = showDismissed ? alerts : active;
+
+  return (
+    <Card
+      className="p-4 border-amber-500/40 bg-amber-500/5"
+      data-testid="olt-login-alerts-banner"
+    >
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="h-5 w-5 text-amber-600 mt-0.5 shrink-0" />
+        <div className="flex-1 space-y-2">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h3 className="text-sm font-semibold text-amber-900 dark:text-amber-200">
+                {active.length > 0
+                  ? `${active.length} suspicious sign-in pattern${active.length === 1 ? "" : "s"} detected`
+                  : "No active alerts"}
+              </h3>
+              <p className="text-xs text-amber-800/80 dark:text-amber-200/70">
+                Last {data.lookbackHours}h · threshold {data.threshold} fails per {data.windowMinutes} min ·
+                business hours {String(data.businessHoursStart).padStart(2, "0")}:00–{String(data.businessHoursEnd).padStart(2, "0")}:00
+              </p>
+            </div>
+            <button
+              onClick={() => setShowDismissed((v) => !v)}
+              className="text-xs text-amber-800/80 dark:text-amber-200/70 hover:underline"
+            >
+              {showDismissed ? "Hide dismissed" : "Show dismissed"}
+            </button>
+          </div>
+
+          <ul className="space-y-2">
+            {visible.map((a) => (
+              <li
+                key={`${a.kind}|${a.host}|${a.scopeKey}|${a.lastAt}`}
+                className={
+                  "flex items-start justify-between gap-3 rounded-md border px-3 py-2 " +
+                  (a.acknowledged
+                    ? "border-border/40 bg-background/40 opacity-70"
+                    : "border-amber-500/30 bg-background")
+                }
+                data-testid={`olt-login-alert-${a.kind}-${a.scopeKey || "host"}`}
+              >
+                <div className="text-xs space-y-0.5">
+                  <div className="font-medium">
+                    {alertKindLabel(a.kind)}{" "}
+                    <span className="font-mono text-amber-700 dark:text-amber-300">
+                      {a.scopeLabel}
+                    </span>
+                  </div>
+                  <div className="text-muted-foreground">
+                    Host <span className="font-mono">{a.host}</span> ·{" "}
+                    <span className="font-medium text-destructive">{a.count}</span> failure(s) ·{" "}
+                    {new Date(a.firstAt).toLocaleString()} → {new Date(a.lastAt).toLocaleString()}
+                  </div>
+                  {a.acknowledged && a.acknowledgedAt && (
+                    <div className="text-[11px] text-muted-foreground">
+                      Dismissed {new Date(a.acknowledgedAt).toLocaleString()}
+                    </div>
+                  )}
+                </div>
+                {canWrite && !a.acknowledged && (
+                  <button
+                    onClick={async () => {
+                      try {
+                        await ackM.mutateAsync({
+                          kind: a.kind,
+                          host: a.host,
+                          scopeKey: a.scopeKey,
+                          watermarkAt: a.lastAt,
+                        });
+                        toast.success("Alert dismissed");
+                      } catch (e) {
+                        toast.error(e instanceof Error ? e.message : "Dismiss failed");
+                      }
+                    }}
+                    disabled={ackM.isPending}
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground border border-border/60 rounded px-2 py-1 shrink-0"
+                    data-testid={`olt-login-alert-dismiss-${a.kind}-${a.scopeKey || "host"}`}
+                  >
+                    <Check className="h-3 w-3" /> Dismiss
+                  </button>
+                )}
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </Card>
   );
 }
 

@@ -134,6 +134,47 @@ async function installBackendMocks(context: BrowserContext) {
       }),
     );
   });
+  await context.route("**/api/olt/login-alerts/acknowledge", (route) => {
+    route.fulfill(
+      json({
+        success: true,
+        id: 1,
+        watermarkAt: new Date().toISOString(),
+      }),
+    );
+  });
+  await context.route("**/api/olt/login-alerts**", (route) => {
+    if (route.request().url().includes("/login-alerts/acknowledge")) {
+      // Already handled above; the handler order matters but we still
+      // guard here in case Playwright dispatches this glob first.
+      route.fulfill(json({ success: true, id: 1, watermarkAt: new Date().toISOString() }));
+      return;
+    }
+    route.fulfill(
+      json({
+        alerts: [
+          {
+            kind: "ip_burst",
+            host: "10.0.0.1",
+            scopeKey: "203.0.113.5",
+            scopeLabel: "203.0.113.5",
+            count: 7,
+            firstAt: "2026-04-22T09:00:00.000Z",
+            lastAt: "2026-04-22T09:08:00.000Z",
+            sampleIds: [101, 102, 103, 104, 105],
+            acknowledged: false,
+            acknowledgedAt: null,
+          },
+        ],
+        activeCount: 1,
+        windowMinutes: 10,
+        threshold: 5,
+        lookbackHours: 24,
+        businessHoursStart: 6,
+        businessHoursEnd: 22,
+      }),
+    );
+  });
   await context.route("**/api/olt/password-policy", (route) =>
     route.fulfill(json({ success: true, policy: null })),
   );
@@ -303,5 +344,110 @@ test.describe("Huawei OLT vendor flow", () => {
     ]);
     // The mocked Content-Disposition above sets a stable filename.
     expect(download.suggestedFilename()).toMatch(/^olt-login-history__.*\.csv$/);
+  });
+
+  test("OLT Users page shows login alerts banner and writers can dismiss alerts", async ({
+    page,
+    context,
+  }) => {
+    await installBackendMocks(context);
+
+    // Capture the body posted to /acknowledge so we can verify the watermark
+    // and scope are passed through correctly.
+    const ackCalls: any[] = [];
+    await context.route("**/api/olt/login-alerts/acknowledge", (route) => {
+      ackCalls.push(route.request().postDataJSON());
+      route.fulfill(
+        json({
+          success: true,
+          id: 1,
+          watermarkAt: "2026-04-22T09:08:00.000Z",
+        }),
+      );
+    });
+
+    // After dismissal, swap the alerts response to "no active alerts" so a
+    // refetch hides the banner. We track call count to switch responses.
+    let alertsCallCount = 0;
+    await context.unroute("**/api/olt/login-alerts**");
+    await context.route("**/api/olt/login-alerts**", (route) => {
+      const url = route.request().url();
+      if (url.includes("/login-alerts/acknowledge")) {
+        ackCalls.push(route.request().postDataJSON());
+        route.fulfill(
+          json({ success: true, id: 1, watermarkAt: "2026-04-22T09:08:00.000Z" }),
+        );
+        return;
+      }
+      alertsCallCount += 1;
+      // After the first dismiss has happened, return an empty active list so
+      // the banner disappears on the next refetch.
+      const showAlert = ackCalls.length === 0;
+      route.fulfill(
+        json({
+          alerts: showAlert
+            ? [
+                {
+                  kind: "ip_burst",
+                  host: "10.0.0.1",
+                  scopeKey: "203.0.113.5",
+                  scopeLabel: "203.0.113.5",
+                  count: 7,
+                  firstAt: "2026-04-22T09:00:00.000Z",
+                  lastAt: "2026-04-22T09:08:00.000Z",
+                  sampleIds: [101, 102, 103, 104, 105],
+                  acknowledged: false,
+                  acknowledgedAt: null,
+                },
+              ]
+            : [],
+          activeCount: showAlert ? 1 : 0,
+          windowMinutes: 10,
+          threshold: 5,
+          lookbackHours: 24,
+          businessHoursStart: 6,
+          businessHoursEnd: 22,
+        }),
+      );
+    });
+
+    // Connect as OLT to seed router context.
+    await page.goto("/");
+    await page.getByRole("button", { name: "Huawei OLT" }).click();
+    await page.locator('input[name="host"]').fill("10.0.0.1");
+    await page.locator('input[name="username"]').fill("root");
+    await page.locator('input[name="password"]').fill("secret123");
+    await page.getByRole("button", { name: /Establish Connection/i }).click();
+    await page.waitForURL("**/dashboard", { timeout: 10_000 });
+
+    await page.goto("/olt-users");
+
+    // Banner is visible with the IP burst alert.
+    const banner = page.locator('[data-testid="olt-login-alerts-banner"]');
+    await expect(banner).toBeVisible({ timeout: 10_000 });
+    await expect(banner).toContainText("1 suspicious sign-in pattern detected");
+    await expect(banner).toContainText("203.0.113.5");
+    await expect(banner).toContainText("Failed-login burst from IP");
+    await expect(banner).toContainText("7 failure(s)");
+
+    // Writer (canWrite=true via /api/admin/me mock) sees a Dismiss button.
+    const dismissBtn = page.locator(
+      '[data-testid="olt-login-alert-dismiss-ip_burst-203.0.113.5"]',
+    );
+    await expect(dismissBtn).toBeVisible();
+    await dismissBtn.click();
+
+    // The acknowledge POST was sent with the right payload.
+    await expect.poll(() => ackCalls.length, { timeout: 5_000 }).toBeGreaterThan(0);
+    expect(ackCalls[0]).toMatchObject({
+      kind: "ip_burst",
+      host: "10.0.0.1",
+      scopeKey: "203.0.113.5",
+      watermarkAt: "2026-04-22T09:08:00.000Z",
+    });
+
+    // Banner disappears after refetch (mock now returns 0 alerts).
+    await expect(banner).toBeHidden({ timeout: 10_000 });
+    expect(alertsCallCount).toBeGreaterThan(1);
   });
 });

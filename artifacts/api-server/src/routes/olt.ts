@@ -7,7 +7,13 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { and, eq, ilike, desc, sql } from "drizzle-orm";
-import { db, pool, oltLoginEventsTable, type PoolClient } from "@workspace/db";
+import {
+  db,
+  pool,
+  oltLoginEventsTable,
+  oltLoginAlertAcksTable,
+  type PoolClient,
+} from "@workspace/db";
 import QueryStream from "pg-query-stream";
 import { once } from "node:events";
 import { requireUser, requireWriter } from "../middlewares/requireAuth";
@@ -1841,6 +1847,332 @@ router.delete("/olt/login-history", ...requireWriter(), async (req, res): Promis
     res.status(500).json({ success: false, error: errMsg(err) });
   }
 });
+
+// ─────────────────────────── LOGIN ALERTS ───────────────────────────
+//
+// Aggregate `olt_login_events` (where result='fail') into actionable
+// brute-force / off-hours alerts. Alerts are computed on demand (no cron) —
+// the OLT Users page polls this endpoint and surfaces active alerts as a
+// banner. Writers can dismiss an alert with `/olt/login-alerts/acknowledge`,
+// which records a watermark; the alert reappears only once a *newer* failed
+// event arrives, so dismissals never silently swallow a fresh attack wave.
+
+/** Rolling-window threshold: ≥N failures from the same source in W minutes. */
+const ALERT_WINDOW_MINUTES = 10;
+const ALERT_THRESHOLD = 5;
+/** How far back we scan when computing alerts. */
+const ALERT_LOOKBACK_HOURS = 24;
+/**
+ * "Business hours" for the off-hours alert — server local time, inclusive
+ * start, exclusive end. A failed login whose hour falls outside this range
+ * counts as off-hours. Kept simple and local-time so the rule matches the
+ * operator's intuition without forcing per-user timezone configuration.
+ */
+const BUSINESS_HOURS_START = 6;
+const BUSINESS_HOURS_END = 22;
+
+type AlertKind = "ip_burst" | "user_burst" | "off_hours";
+
+interface LoginAlert {
+  kind: AlertKind;
+  host: string;
+  /** Source IP / username / "" — see olt_login_alerts schema docs */
+  scopeKey: string;
+  /** Human-readable label (the IP, the username, or a description) */
+  scopeLabel: string;
+  count: number;
+  /** ISO 8601 — first event in the burst */
+  firstAt: string;
+  /** ISO 8601 — last event in the burst (the dismissal watermark) */
+  lastAt: string;
+  /** Up to 5 sample event ids (most recent in the burst) */
+  sampleIds: number[];
+  /** Whether this alert is currently dismissed (watermark covers lastAt) */
+  acknowledged: boolean;
+  /** ISO 8601 of the most recent dismissal, if any (for the UI) */
+  acknowledgedAt: string | null;
+}
+
+interface BurstWindow {
+  count: number;
+  firstAt: Date;
+  lastAt: Date;
+  sampleIds: number[];
+}
+
+/**
+ * Find the densest rolling W-minute window in `events` that contains at
+ * least `ALERT_THRESHOLD` rows. Returns null if no qualifying window exists.
+ * Two-pointer scan over the time-sorted list — O(n) per group.
+ */
+function detectBurst(events: { id: number; ts: Date }[]): BurstWindow | null {
+  if (events.length < ALERT_THRESHOLD) return null;
+  const sorted = [...events].sort((a, b) => a.ts.getTime() - b.ts.getTime());
+  const windowMs = ALERT_WINDOW_MINUTES * 60 * 1000;
+  let bestCount = 0;
+  let bestFirst = 0;
+  let bestLast = 0;
+  let l = 0;
+  for (let r = 0; r < sorted.length; r++) {
+    while (sorted[r].ts.getTime() - sorted[l].ts.getTime() > windowMs) l++;
+    const cnt = r - l + 1;
+    if (cnt >= ALERT_THRESHOLD && cnt > bestCount) {
+      bestCount = cnt;
+      bestFirst = l;
+      bestLast = r;
+    }
+  }
+  if (bestCount === 0) return null;
+  const slice = sorted.slice(bestFirst, bestLast + 1);
+  return {
+    count: bestCount,
+    firstAt: slice[0].ts,
+    lastAt: slice[slice.length - 1].ts,
+    // Most recent five — useful for the UI to deep-link into history.
+    sampleIds: slice.slice(-5).map((e) => e.id),
+  };
+}
+
+const AlertsQuery = z.object({
+  host: z.string().min(1).max(128).optional(),
+  /** Include dismissed alerts in the response (UI history view). */
+  includeAcknowledged: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => v === true || v === "true" || v === "1")
+    .optional(),
+});
+
+router.get("/olt/login-alerts", async (req, res): Promise<void> => {
+  const userId = req.userId;
+  if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+  const parsed = AlertsQuery.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  const { host, includeAcknowledged } = parsed.data;
+
+  try {
+    const since = new Date(Date.now() - ALERT_LOOKBACK_HOURS * 60 * 60 * 1000);
+    const conds = [
+      eq(oltLoginEventsTable.ownerUserId, userId),
+      eq(oltLoginEventsTable.result, "fail"),
+      // Use coalesce so events whose device timestamp didn't parse still
+      // contribute to recent-window detection (we fall back to seenAt).
+      sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.seenAt}) >= ${since}`,
+    ];
+    if (host) conds.push(eq(oltLoginEventsTable.host, host));
+
+    const rows = await db
+      .select({
+        id: oltLoginEventsTable.id,
+        host: oltLoginEventsTable.host,
+        username: oltLoginEventsTable.username,
+        sourceIp: oltLoginEventsTable.sourceIp,
+        loginAt: oltLoginEventsTable.loginAt,
+        seenAt: oltLoginEventsTable.seenAt,
+      })
+      .from(oltLoginEventsTable)
+      .where(and(...conds));
+
+    type Ev = { id: number; host: string; username: string; sourceIp: string | null; ts: Date };
+    const events: Ev[] = rows.map((r) => ({
+      id: r.id,
+      host: r.host,
+      username: r.username,
+      sourceIp: r.sourceIp,
+      ts: r.loginAt ?? r.seenAt,
+    }));
+
+    const candidates: LoginAlert[] = [];
+
+    // ── ip_burst — group by (host, sourceIp); skip rows without an IP.
+    {
+      const groups = new Map<string, Ev[]>();
+      for (const e of events) {
+        if (!e.sourceIp) continue;
+        const key = `${e.host}\u0000${e.sourceIp}`;
+        const arr = groups.get(key);
+        if (arr) arr.push(e); else groups.set(key, [e]);
+      }
+      for (const [key, group] of groups) {
+        const det = detectBurst(group);
+        if (!det) continue;
+        const [h, ip] = key.split("\u0000");
+        candidates.push({
+          kind: "ip_burst",
+          host: h,
+          scopeKey: ip,
+          scopeLabel: ip,
+          count: det.count,
+          firstAt: det.firstAt.toISOString(),
+          lastAt: det.lastAt.toISOString(),
+          sampleIds: det.sampleIds,
+          acknowledged: false,
+          acknowledgedAt: null,
+        });
+      }
+    }
+
+    // ── user_burst — group by (host, username).
+    {
+      const groups = new Map<string, Ev[]>();
+      for (const e of events) {
+        const key = `${e.host}\u0000${e.username}`;
+        const arr = groups.get(key);
+        if (arr) arr.push(e); else groups.set(key, [e]);
+      }
+      for (const [key, group] of groups) {
+        const det = detectBurst(group);
+        if (!det) continue;
+        const [h, username] = key.split("\u0000");
+        candidates.push({
+          kind: "user_burst",
+          host: h,
+          scopeKey: username,
+          scopeLabel: username,
+          count: det.count,
+          firstAt: det.firstAt.toISOString(),
+          lastAt: det.lastAt.toISOString(),
+          sampleIds: det.sampleIds,
+          acknowledged: false,
+          acknowledgedAt: null,
+        });
+      }
+    }
+
+    // ── off_hours — every fail outside business hours, grouped by host.
+    // Threshold = 1: a single off-hours failure is already worth flagging.
+    {
+      const groups = new Map<string, Ev[]>();
+      for (const e of events) {
+        const h = e.ts.getHours();
+        if (h >= BUSINESS_HOURS_START && h < BUSINESS_HOURS_END) continue;
+        const arr = groups.get(e.host);
+        if (arr) arr.push(e); else groups.set(e.host, [e]);
+      }
+      for (const [h, group] of groups) {
+        if (group.length === 0) continue;
+        const sorted = [...group].sort((a, b) => a.ts.getTime() - b.ts.getTime());
+        candidates.push({
+          kind: "off_hours",
+          host: h,
+          scopeKey: "",
+          scopeLabel: `outside ${String(BUSINESS_HOURS_START).padStart(2, "0")}:00–${String(BUSINESS_HOURS_END).padStart(2, "0")}:00 local`,
+          count: group.length,
+          firstAt: sorted[0].ts.toISOString(),
+          lastAt: sorted[sorted.length - 1].ts.toISOString(),
+          sampleIds: sorted.slice(-5).map((e) => e.id),
+          acknowledged: false,
+          acknowledgedAt: null,
+        });
+      }
+    }
+
+    // Apply acknowledgements: an ack row covering (kind, host, scopeKey)
+    // suppresses the alert iff its watermark >= the burst's lastAt.
+    const ackRows = await db
+      .select()
+      .from(oltLoginAlertAcksTable)
+      .where(eq(oltLoginAlertAcksTable.ownerUserId, userId));
+    const ackMap = new Map<string, { watermark: Date; acknowledgedAt: Date }>();
+    for (const a of ackRows) {
+      ackMap.set(`${a.kind}\u0000${a.host}\u0000${a.scopeKey}`, {
+        watermark: a.watermarkAt,
+        acknowledgedAt: a.acknowledgedAt,
+      });
+    }
+
+    const annotated = candidates.map((a) => {
+      const ack = ackMap.get(`${a.kind}\u0000${a.host}\u0000${a.scopeKey}`);
+      if (!ack) return a;
+      const covered = new Date(a.lastAt).getTime() <= ack.watermark.getTime();
+      return covered
+        ? { ...a, acknowledged: true, acknowledgedAt: ack.acknowledgedAt.toISOString() }
+        : a;
+    });
+
+    const visible = includeAcknowledged
+      ? annotated
+      : annotated.filter((a) => !a.acknowledged);
+
+    // Most recent burst first.
+    visible.sort((a, b) => b.lastAt.localeCompare(a.lastAt));
+
+    res.json({
+      alerts: visible,
+      activeCount: visible.filter((a) => !a.acknowledged).length,
+      windowMinutes: ALERT_WINDOW_MINUTES,
+      threshold: ALERT_THRESHOLD,
+      lookbackHours: ALERT_LOOKBACK_HOURS,
+      businessHoursStart: BUSINESS_HOURS_START,
+      businessHoursEnd: BUSINESS_HOURS_END,
+    });
+  } catch (err) {
+    res.status(500).json({ error: errMsg(err) });
+  }
+});
+
+const AckBody = z.object({
+  kind: z.enum(["ip_burst", "user_burst", "off_hours"]),
+  host: z.string().min(1).max(128),
+  /** Empty string for off_hours (no per-IP/user scope). */
+  scopeKey: z.string().max(128).optional().default(""),
+  /** ISO 8601 — the burst's lastAt; events newer than this re-trigger the alert. */
+  watermarkAt: z.string().min(1),
+});
+
+router.post(
+  "/olt/login-alerts/acknowledge",
+  ...requireWriter(),
+  async (req, res): Promise<void> => {
+    const userId = req.userId;
+    if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
+    const parsed = AckBody.safeParse(req.body);
+    if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
+    const d = parsed.data;
+    const wm = parseDeviceTimestamp(d.watermarkAt);
+    if (!wm) { res.status(400).json({ error: "Invalid `watermarkAt`" }); return; }
+    try {
+      const now = new Date();
+      const r = await db
+        .insert(oltLoginAlertAcksTable)
+        .values({
+          ownerUserId: userId,
+          kind: d.kind,
+          host: d.host,
+          scopeKey: d.scopeKey,
+          watermarkAt: wm,
+          acknowledgedAt: now,
+          acknowledgedBy: userId,
+        })
+        .onConflictDoUpdate({
+          target: [
+            oltLoginAlertAcksTable.ownerUserId,
+            oltLoginAlertAcksTable.kind,
+            oltLoginAlertAcksTable.host,
+            oltLoginAlertAcksTable.scopeKey,
+          ],
+          set: {
+            // Always advance the watermark — re-acknowledging an already
+            // dismissed alert with an older watermark would "un-dismiss"
+            // the burst, which is never what the operator wants.
+            watermarkAt: sql`greatest(${oltLoginAlertAcksTable.watermarkAt}, ${wm})`,
+            acknowledgedAt: now,
+            acknowledgedBy: userId,
+          },
+        })
+        .returning({ id: oltLoginAlertAcksTable.id, watermarkAt: oltLoginAlertAcksTable.watermarkAt });
+      res.json({
+        success: true,
+        id: r[0]?.id ?? null,
+        watermarkAt: r[0]?.watermarkAt?.toISOString() ?? wm.toISOString(),
+      });
+    } catch (err) {
+      res.status(500).json({ success: false, error: errMsg(err) });
+    }
+  },
+);
 
 const KickBody = Creds.extend({
   /** Either username or numeric user-index; both are whitelisted below. */
