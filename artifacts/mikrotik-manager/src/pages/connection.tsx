@@ -180,7 +180,6 @@ export default function ConnectionPage() {
         <div className="absolute inset-0 bg-gradient-to-t from-background via-background/80 to-transparent" />
         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,_var(--tw-gradient-stops))] from-primary/10 via-transparent to-transparent" />
       </div>
-
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
@@ -192,7 +191,7 @@ export default function ConnectionPage() {
             <div className="absolute inset-0 rounded-2xl glow-effect opacity-50" />
             <Activity className="h-8 w-8 text-primary relative z-10" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight text-foreground">Network Device Manager</h1>
+          <h1 className="text-2xl font-bold tracking-tight text-foreground">RouteManager</h1>
           <p className="text-muted-foreground mt-2 text-sm">
             Connect to a MikroTik router or Huawei SmartAX OLT to start a managed session.
           </p>

@@ -1446,6 +1446,99 @@ interface HistoryRow {
   lastSeenAt: string;
 }
 
+// ─── Shared filter logic for the JSON + CSV history endpoints ────────────
+//
+// Both `/olt/login-history` (JSON, paginated) and `/olt/login-history.csv`
+// (streamed export) project the same filtered slice of `olt_login_events`.
+// Keeping the WHERE / ORDER BY in one place is what guarantees the on-screen
+// view and the downloaded CSV never silently disagree — adding a new filter
+// (or tweaking how date bounds work) means editing exactly one helper, not
+// two parallel copies that have to stay byte-identical by code review alone.
+
+/**
+ * Resolved filter set after date-string parsing — what `historyWhere` and
+ * `buildHistorySelect` consume. Pagination (`limit` / `offset`) is owned
+ * by each endpoint since it differs between them.
+ */
+export interface HistoryFilters {
+  host?: string;
+  username?: string;
+  sourceIp?: string;
+  channel?: string;
+  result?: "success" | "fail";
+  fromDate: Date | null;
+  toDate: Date | null;
+}
+
+/** Subset of the parsed query that `parseHistoryFilters` needs. */
+type HistoryFilterInput = Pick<
+  z.infer<typeof HistoryQuery>,
+  "host" | "from" | "to" | "username" | "sourceIp" | "channel" | "result"
+>;
+
+/**
+ * Validate the date strings in a parsed history query and resolve them
+ * into Date objects. Returns either the canonical filter set or a
+ * 400-eligible error message identical to what each endpoint used to
+ * produce inline.
+ */
+export function parseHistoryFilters(
+  q: HistoryFilterInput,
+): { ok: true; filters: HistoryFilters } | { ok: false; error: string } {
+  const fromDate = q.from ? parseDeviceTimestamp(q.from) : null;
+  const toDate = q.to ? parseDeviceTimestamp(q.to) : null;
+  if (q.from && !fromDate) return { ok: false, error: "Invalid `from` timestamp" };
+  if (q.to && !toDate) return { ok: false, error: "Invalid `to` timestamp" };
+  return {
+    ok: true,
+    filters: {
+      host: q.host,
+      username: q.username,
+      sourceIp: q.sourceIp,
+      channel: q.channel,
+      result: q.result,
+      fromDate,
+      toDate,
+    },
+  };
+}
+
+/**
+ * Build the parameterized WHERE clause shared by every history read
+ * (JSON list, JSON count, CSV stream). Always scoped to the calling
+ * user's events. Date filters coalesce to `logout_at` so orphan logout
+ * rows / unparseable device timestamps don't silently disappear from
+ * the caller's range.
+ */
+export function historyWhere(userId: string, filters: HistoryFilters) {
+  const conds = [eq(oltLoginEventsTable.ownerUserId, userId)];
+  if (filters.host) conds.push(eq(oltLoginEventsTable.host, filters.host));
+  if (filters.username) conds.push(eq(oltLoginEventsTable.username, filters.username));
+  if (filters.sourceIp) conds.push(ilike(oltLoginEventsTable.sourceIp, `%${filters.sourceIp}%`));
+  if (filters.channel) conds.push(eq(oltLoginEventsTable.channel, filters.channel.toLowerCase()));
+  if (filters.result) conds.push(eq(oltLoginEventsTable.result, filters.result));
+  if (filters.fromDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) >= ${filters.fromDate}`);
+  if (filters.toDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) <= ${filters.toDate}`);
+  return conds.length === 1 ? conds[0] : and(...conds);
+}
+
+/**
+ * Build a Drizzle dynamic SELECT over `olt_login_events` with the shared
+ * WHERE and the canonical history ORDER BY applied. Callers add LIMIT /
+ * OFFSET (or hand it to a cursor) as needed.
+ */
+export function buildHistorySelect(userId: string, filters: HistoryFilters) {
+  return db
+    .select()
+    .from(oltLoginEventsTable)
+    .where(historyWhere(userId, filters))
+    .orderBy(
+      sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) desc nulls last`,
+      desc(oltLoginEventsTable.id),
+    )
+    .$dynamic();
+}
+
 router.get("/olt/login-history", async (req, res): Promise<void> => {
   const userId = req.userId;
   if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
@@ -1455,33 +1548,13 @@ router.get("/olt/login-history", async (req, res): Promise<void> => {
     return;
   }
   const q = parsed.data;
-  const fromDate = q.from ? parseDeviceTimestamp(q.from) : null;
-  const toDate = q.to ? parseDeviceTimestamp(q.to) : null;
-  if (q.from && !fromDate) { res.status(400).json({ error: "Invalid `from` timestamp" }); return; }
-  if (q.to && !toDate) { res.status(400).json({ error: "Invalid `to` timestamp" }); return; }
-
-  const conds = [eq(oltLoginEventsTable.ownerUserId, userId)];
-  if (q.host) conds.push(eq(oltLoginEventsTable.host, q.host));
-  if (q.username) conds.push(eq(oltLoginEventsTable.username, q.username));
-  if (q.sourceIp) conds.push(ilike(oltLoginEventsTable.sourceIp, `%${q.sourceIp}%`));
-  if (q.channel) conds.push(eq(oltLoginEventsTable.channel, q.channel.toLowerCase()));
-  if (q.result) conds.push(eq(oltLoginEventsTable.result, q.result));
-  // Date filters fall back to logout_at when login_at is null (orphan
-  // logout rows or events whose device timestamp didn't parse) so the
-  // caller's date range never silently loses rows.
-  if (fromDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) >= ${fromDate}`);
-  if (toDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) <= ${toDate}`);
+  const filterRes = parseHistoryFilters(q);
+  if (!filterRes.ok) { res.status(400).json({ error: filterRes.error }); return; }
+  const filters = filterRes.filters;
 
   try {
-    const where = conds.length === 1 ? conds[0] : and(...conds);
-    const rows = await db
-      .select()
-      .from(oltLoginEventsTable)
-      .where(where)
-      .orderBy(
-        sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) desc nulls last`,
-        desc(oltLoginEventsTable.id),
-      )
+    const where = historyWhere(userId, filters);
+    const rows = await buildHistorySelect(userId, filters)
       .limit(q.limit)
       .offset(q.offset);
     const totalRow = await db
@@ -1567,33 +1640,15 @@ router.get("/olt/login-history.csv", async (req, res): Promise<void> => {
     return;
   }
   const q = parsed.data;
-  const fromDate = q.from ? parseDeviceTimestamp(q.from) : null;
-  const toDate = q.to ? parseDeviceTimestamp(q.to) : null;
-  if (q.from && !fromDate) { res.status(400).json({ error: "Invalid `from` timestamp" }); return; }
-  if (q.to && !toDate) { res.status(400).json({ error: "Invalid `to` timestamp" }); return; }
+  const filterRes = parseHistoryFilters(q);
+  if (!filterRes.ok) { res.status(400).json({ error: filterRes.error }); return; }
+  const filters = filterRes.filters;
 
-  const conds = [eq(oltLoginEventsTable.ownerUserId, userId)];
-  if (q.host) conds.push(eq(oltLoginEventsTable.host, q.host));
-  if (q.username) conds.push(eq(oltLoginEventsTable.username, q.username));
-  if (q.sourceIp) conds.push(ilike(oltLoginEventsTable.sourceIp, `%${q.sourceIp}%`));
-  if (q.channel) conds.push(eq(oltLoginEventsTable.channel, q.channel.toLowerCase()));
-  if (q.result) conds.push(eq(oltLoginEventsTable.result, q.result));
-  if (fromDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) >= ${fromDate}`);
-  if (toDate) conds.push(sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) <= ${toDate}`);
-
-  // Build the parameterized SELECT through Drizzle so the WHERE/ORDER BY
-  // logic stays identical to the JSON endpoint, then hand the resulting
-  // SQL + params to a raw pg cursor for true row-by-row streaming.
-  const where = conds.length === 1 ? conds[0] : and(...conds);
-  let builder = db
-    .select()
-    .from(oltLoginEventsTable)
-    .where(where)
-    .orderBy(
-      sql`coalesce(${oltLoginEventsTable.loginAt}, ${oltLoginEventsTable.logoutAt}) desc nulls last`,
-      desc(oltLoginEventsTable.id),
-    )
-    .$dynamic();
+  // Reuse the shared SELECT builder so WHERE/ORDER BY parity with the JSON
+  // endpoint is structural — adding a new filter to `historyWhere` flows
+  // through here automatically. Then hand the resulting SQL + params to
+  // a raw pg cursor for true row-by-row streaming.
+  let builder = buildHistorySelect(userId, filters);
   if (q.limit !== undefined) builder = builder.limit(q.limit);
   if (q.offset > 0) builder = builder.offset(q.offset);
   const { sql: queryText, params } = builder.toSQL();
