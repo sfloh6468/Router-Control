@@ -128,11 +128,13 @@ test("neither route handler re-inlines per-filter WHERE conditions", () => {
   const here = dirname(fileURLToPath(import.meta.url));
   const src = readFileSync(join(here, "olt.ts"), "utf8");
 
-  function bodyOf(routePathLiteral: string): string {
-    const startMarker = `router.get("${routePathLiteral}",`;
-    const start = src.indexOf(startMarker);
-    assert.ok(start >= 0, `could not locate route handler for ${routePathLiteral}`);
-    // Walk braces to find the handler body's matching close-brace.
+  // The two route handlers are now extracted as named arrow-function
+  // exports (`historyJsonHandler`, `historyCsvHandler`) so they can be
+  // mounted on a test app for HTTP-level testing. Locate each by its
+  // declaration and walk braces to capture the function body.
+  function bodyOf(declMarker: string): string {
+    const start = src.indexOf(declMarker);
+    assert.ok(start >= 0, `could not locate handler declaration: ${declMarker}`);
     const bodyOpen = src.indexOf("{", start);
     let depth = 0;
     let i = bodyOpen;
@@ -147,8 +149,8 @@ test("neither route handler re-inlines per-filter WHERE conditions", () => {
     return src.slice(bodyOpen, i + 1);
   }
 
-  const jsonBody = bodyOf("/olt/login-history");
-  const csvBody = bodyOf("/olt/login-history.csv");
+  const jsonBody = bodyOf("export const historyJsonHandler =");
+  const csvBody = bodyOf("export const historyCsvHandler =");
 
   // Per-filter primitives that historyWhere uses internally. If a route
   // body contains one of these for the events table, someone re-inlined.

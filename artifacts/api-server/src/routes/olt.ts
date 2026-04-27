@@ -1545,7 +1545,7 @@ export function buildHistorySelect(userId: string, filters: HistoryFilters) {
     .$dynamic();
 }
 
-router.get("/olt/login-history", async (req, res): Promise<void> => {
+export const historyJsonHandler = async (req: Request, res: Response): Promise<void> => {
   const userId = req.userId;
   if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
   const parsed = HistoryQuery.safeParse(req.query);
@@ -1590,7 +1590,8 @@ router.get("/olt/login-history", async (req, res): Promise<void> => {
   } catch (err) {
     res.status(500).json({ error: errMsg(err) });
   }
-});
+};
+router.get("/olt/login-history", historyJsonHandler);
 
 // CSV export of the same filtered set the GET endpoint serves. Lets ops hand
 // raw rows to security / compliance reviewers without paginating through the
@@ -1624,7 +1625,7 @@ const CSV_CURSOR_BATCH = 1000;
 // See: OWASP "CSV Injection" / CWE-1236.
 const CSV_FORMULA_LEADERS = /^[=+\-@\t\r]/;
 
-function csvField(v: string | number | null | undefined): string {
+export function csvField(v: string | number | null | undefined): string {
   if (v === null || v === undefined) return "";
   let s = String(v);
   if (CSV_FORMULA_LEADERS.test(s)) s = `'${s}`;
@@ -1633,11 +1634,11 @@ function csvField(v: string | number | null | undefined): string {
   return `"${s.replace(/"/g, '""')}"`;
 }
 
-function safeFilenamePart(s: string): string {
+export function safeFilenamePart(s: string): string {
   return s.replace(/[^A-Za-z0-9._-]+/g, "_").slice(0, 64) || "all";
 }
 
-router.get("/olt/login-history.csv", async (req, res): Promise<void> => {
+export const historyCsvHandler = async (req: Request, res: Response): Promise<void> => {
   const userId = req.userId;
   if (!userId) { res.status(401).json({ error: "Unauthenticated" }); return; }
   const parsed = CsvQuery.safeParse(req.query);
@@ -1793,7 +1794,8 @@ router.get("/olt/login-history.csv", async (req, res): Promise<void> => {
     if (dbStream && !dbStream.destroyed) dbStream.destroy();
     client.release();
   }
-});
+};
+router.get("/olt/login-history.csv", historyCsvHandler);
 
 const PurgeQuery = z.object({
   /** Numeric event id — when set, deletes only that single row. */
