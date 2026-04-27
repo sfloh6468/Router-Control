@@ -212,16 +212,25 @@ after(async () => {
 
 const skipReason = HAS_DB ? undefined : "DATABASE_URL not set";
 
-test(
-  "GET /olt/login-history.csv returns 401 JSON when req.userId is not set",
-  { skip: skipReason },
-  async () => {
-    const res = await fetch(`${unauthedBase}/api/olt/login-history.csv`);
+// The 401 path returns before any DB call, so this test runs
+// unconditionally — it gives CI a useful auth-guard signal even when
+// the contributor running the suite has no DATABASE_URL configured.
+test("GET /olt/login-history.csv returns 401 JSON when req.userId is not set", async () => {
+  // We don't go through the shared `before()` (which depends on DB
+  // seeding); spin up a tiny standalone unauthed app just for this case.
+  const standaloneApp = makeUnauthedApp();
+  const standaloneServer = standaloneApp.listen(0);
+  try {
+    await new Promise<void>((r) => standaloneServer.once("listening", () => r()));
+    const port = (standaloneServer.address() as AddressInfo).port;
+    const res = await fetch(`http://127.0.0.1:${port}/api/olt/login-history.csv`);
     assert.equal(res.status, 401);
     const body = await res.json();
     assert.deepEqual(body, { error: "Unauthenticated" });
-  },
-);
+  } finally {
+    await new Promise<void>((r) => standaloneServer.close(() => r()));
+  }
+});
 
 test(
   "GET /olt/login-history.csv sets text/csv Content-Type and the archival Content-Disposition filename",
