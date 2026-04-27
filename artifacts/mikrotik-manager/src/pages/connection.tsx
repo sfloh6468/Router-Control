@@ -288,7 +288,7 @@ export default function ConnectionPage() {
             )}
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Username</label>
+              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Login</label>
               <div className="relative">
                 <Shield className="absolute left-3 top-2.5 h-4 w-4 text-muted-foreground" />
                 <Input
