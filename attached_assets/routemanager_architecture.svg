@@ -1,0 +1,167 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1520" height="960" font-family="Arial, Helvetica, sans-serif">
+  <defs>
+    <marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 z" fill="#444"/>
+    </marker>
+  </defs>
+  <rect width="1520" height="960" fill="#f4f4f4"/>
+  <text x="760" y="42" text-anchor="middle" font-size="30" font-weight="bold" fill="#222">RouteManager App — Architecture (corrected)</text>
+
+  <!-- LAYER 1 -->
+  <rect x="30" y="62" width="1460" height="120" fill="#d6e9f8" rx="10"/>
+  <text x="55" y="115" font-size="16" font-weight="bold">LAYER 1 —</text>
+  <text x="55" y="136" font-size="16" font-weight="bold">USERS</text>
+
+  <rect x="420" y="76" width="280" height="52" fill="#fff" stroke="#444" rx="6"/>
+  <text x="560" y="98" text-anchor="middle" font-size="15" font-weight="bold">Subscribers</text>
+  <text x="560" y="117" text-anchor="middle" font-size="12">(1-to-1 chats &amp; condo groups)</text>
+
+  <rect x="760" y="76" width="300" height="52" fill="#fff" stroke="#444" rx="6"/>
+  <text x="910" y="98" text-anchor="middle" font-size="15" font-weight="bold">Staff</text>
+  <text x="910" y="117" text-anchor="middle" font-size="12">(technical-team WhatsApp groups)</text>
+
+  <line x1="560" y1="128" x2="700" y2="150" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="910" y1="128" x2="770" y2="150" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+  <rect x="670" y="148" width="140" height="30" fill="#fff" stroke="#444" rx="6"/>
+  <text x="740" y="168" text-anchor="middle" font-size="14" font-weight="bold">WhatsApp</text>
+
+  <!-- LAYER 2 -->
+  <rect x="30" y="192" width="1460" height="220" fill="#d9efd9" rx="10"/>
+  <text x="55" y="290" font-size="16" font-weight="bold">LAYER 2 —</text>
+  <text x="55" y="311" font-size="16" font-weight="bold">APPLICATION</text>
+  <line x1="740" y1="178" x2="740" y2="200" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="330" y="204" width="830" height="196" fill="#ffffff" stroke="#444" stroke-width="1.5" rx="8"/>
+  <text x="745" y="228" text-anchor="middle" font-size="16" font-weight="bold">RouteManager App (hosted on Replit)</text>
+
+  <rect x="350" y="242" width="255" height="62" fill="#f7f7f7" stroke="#666" rx="6"/>
+  <text x="477" y="264" text-anchor="middle" font-size="14" font-weight="bold">Carol AI Chatbot</text>
+  <text x="477" y="282" text-anchor="middle" font-size="11">EN/Malay/Chinese · appointments · staff mode</text>
+  <text x="477" y="297" text-anchor="middle" font-size="11" fill="#555">#26</text>
+
+  <rect x="625" y="242" width="255" height="62" fill="#f7f7f7" stroke="#666" rx="6"/>
+  <text x="752" y="264" text-anchor="middle" font-size="14" font-weight="bold">Ticketing &amp; Reports</text>
+  <text x="752" y="282" text-anchor="middle" font-size="11">outage alerts · manager digests</text>
+  <text x="752" y="297" text-anchor="middle" font-size="11" fill="#555">#28</text>
+
+  <rect x="900" y="242" width="240" height="62" fill="#f7f7f7" stroke="#666" rx="6"/>
+  <text x="1020" y="264" text-anchor="middle" font-size="14" font-weight="bold">Conversation &amp; Audit Log</text>
+  <text x="1020" y="282" text-anchor="middle" font-size="11">(permanent)</text>
+
+  <rect x="350" y="318" width="255" height="62" fill="#f7f7f7" stroke="#666" rx="6"/>
+  <text x="477" y="340" text-anchor="middle" font-size="14" font-weight="bold">Buildings/Units cache</text>
+  <text x="477" y="358" text-anchor="middle" font-size="11">(synced from your subscriber DB)</text>
+  <text x="477" y="373" text-anchor="middle" font-size="11" fill="#555">#24</text>
+
+  <rect x="625" y="318" width="255" height="62" fill="#f7f7f7" stroke="#666" rx="6"/>
+  <text x="752" y="340" text-anchor="middle" font-size="14" font-weight="bold">Subscribe / Unsubscribe flows</text>
+  <text x="752" y="358" text-anchor="middle" font-size="11">new installs &amp; cancellations via chat</text>
+  <text x="752" y="373" text-anchor="middle" font-size="11" fill="#555">#29</text>
+
+  <rect x="900" y="318" width="240" height="62" fill="#f7f7f7" stroke="#666" rx="6"/>
+  <text x="1020" y="340" text-anchor="middle" font-size="14" font-weight="bold">Admin Dashboard</text>
+  <text x="1020" y="358" text-anchor="middle" font-size="11">(existing web UI)</text>
+
+  <!-- LAYER 3 -->
+  <rect x="30" y="422" width="1460" height="112" fill="#fbe8d0" rx="10"/>
+  <text x="55" y="460" font-size="16" font-weight="bold">LAYER 3 —</text>
+  <text x="55" y="481" font-size="16" font-weight="bold">DEVICE &amp;</text>
+  <text x="55" y="502" font-size="16" font-weight="bold">DATA CONNECTORS</text>
+  <line x1="745" y1="400" x2="745" y2="430" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <rect x="250" y="444" width="250" height="66" fill="#fff" stroke="#444" rx="6"/>
+  <text x="375" y="468" text-anchor="middle" font-size="14" font-weight="bold">Netmiko sidecar (SSH)</text>
+  <text x="375" y="486" text-anchor="middle" font-size="11">built in #25 · used by #27</text>
+
+  <rect x="530" y="444" width="230" height="66" fill="#fff" stroke="#444" rx="6"/>
+  <text x="645" y="468" text-anchor="middle" font-size="14" font-weight="bold">FortiGate client</text>
+  <text x="645" y="486" text-anchor="middle" font-size="11">REST API · #30</text>
+
+  <rect x="790" y="444" width="230" height="66" fill="#fff" stroke="#444" rx="6"/>
+  <text x="905" y="468" text-anchor="middle" font-size="14" font-weight="bold">GenieACS client</text>
+  <text x="905" y="486" text-anchor="middle" font-size="11">API · #31</text>
+
+  <rect x="1050" y="444" width="230" height="66" fill="#fff" stroke="#444" rx="6"/>
+  <text x="1165" y="468" text-anchor="middle" font-size="14" font-weight="bold">FreeRADIUS client</text>
+  <text x="1165" y="486" text-anchor="middle" font-size="11">read-only SQL · #32</text>
+
+  <!-- LAYER 4 -->
+  <rect x="30" y="544" width="1460" height="360" fill="#e4e4e4" rx="10"/>
+  <text x="55" y="700" font-size="16" font-weight="bold">LAYER 4 —</text>
+  <text x="55" y="721" font-size="16" font-weight="bold">INFRASTRUCTURE</text>
+  <text x="55" y="742" font-size="16" font-weight="bold">&amp; SERVICES</text>
+
+  <!-- Carol services -->
+  <rect x="250" y="566" width="180" height="60" fill="#fff" stroke="#444" rx="6"/>
+  <text x="340" y="590" text-anchor="middle" font-size="13" font-weight="bold">Google Calendar</text>
+  <text x="340" y="608" text-anchor="middle" font-size="11">(appointments)</text>
+
+  <rect x="250" y="642" width="180" height="72" fill="#fff" stroke="#444" rx="6"/>
+  <text x="340" y="664" text-anchor="middle" font-size="13" font-weight="bold">AI provider</text>
+  <text x="340" y="682" text-anchor="middle" font-size="11">DeepSeek / Kimi / Gemini…</text>
+  <text x="340" y="698" text-anchor="middle" font-size="11">+ separate vision model</text>
+
+  <!-- Your cloud databases group -->
+  <rect x="460" y="566" width="420" height="150" fill="#fdf3f3" stroke="#a33" stroke-dasharray="7,4" rx="8"/>
+  <text x="670" y="588" text-anchor="middle" font-size="14" font-weight="bold" fill="#a33">Your cloud databases</text>
+
+  <rect x="478" y="600" width="185" height="100" fill="#fff" stroke="#444" rx="6"/>
+  <text x="570" y="622" text-anchor="middle" font-size="13" font-weight="bold">① Subscriber DB</text>
+  <text x="570" y="641" text-anchor="middle" font-size="11">URL you provide —</text>
+  <text x="570" y="657" text-anchor="middle" font-size="11">primary data source</text>
+  <text x="570" y="676" text-anchor="middle" font-size="11" fill="#555">#24</text>
+
+  <rect x="678" y="600" width="185" height="100" fill="#fff" stroke="#444" rx="6"/>
+  <text x="770" y="622" text-anchor="middle" font-size="13" font-weight="bold">② Site IPs +</text>
+  <text x="770" y="640" text-anchor="middle" font-size="13" font-weight="bold">OpenVPN creds DB</text>
+  <text x="770" y="659" text-anchor="middle" font-size="11">queried per site,</text>
+  <text x="770" y="674" text-anchor="middle" font-size="11">never stored · #27</text>
+
+  <!-- OpenVPN chain -->
+  <rect x="910" y="614" width="150" height="60" fill="#fff" stroke="#444" rx="6"/>
+  <text x="985" y="638" text-anchor="middle" font-size="13" font-weight="bold">on-demand</text>
+  <text x="985" y="656" text-anchor="middle" font-size="13" font-weight="bold">OpenVPN tunnel</text>
+
+  <line x1="863" y1="644" x2="908" y2="644" stroke="#a33" stroke-width="2" marker-end="url(#arr)"/>
+  <text x="885" y="634" text-anchor="middle" font-size="10" fill="#a33">creds</text>
+
+  <!-- SSH devices -->
+  <rect x="460" y="770" width="480" height="70" fill="#fff" stroke="#444" rx="6"/>
+  <text x="700" y="796" text-anchor="middle" font-size="14" font-weight="bold">SSH → MikroTik | Huawei OLT | V-SOL OLT</text>
+  <text x="700" y="818" text-anchor="middle" font-size="12">[Cisco / others: future drivers]</text>
+  <line x1="985" y1="674" x2="800" y2="768" stroke="#444" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="935" y="720" font-size="11" fill="#444">SSH inside tunnel</text>
+
+  <!-- GenieACS -->
+  <rect x="1090" y="566" width="200" height="80" fill="#fff" stroke="#444" rx="6"/>
+  <text x="1190" y="590" text-anchor="middle" font-size="13" font-weight="bold">GenieACS server</text>
+  <text x="1190" y="608" text-anchor="middle" font-size="11">(your VPS: ACS + MongoDB)</text>
+  <text x="1190" y="626" text-anchor="middle" font-size="11" fill="#555">#31</text>
+
+  <rect x="1310" y="566" width="170" height="100" fill="#fff" stroke="#444" rx="6"/>
+  <text x="1395" y="590" text-anchor="middle" font-size="13" font-weight="bold">FreeRADIUS</text>
+  <text x="1395" y="608" text-anchor="middle" font-size="11">your AAA: PPPoE sessions,</text>
+  <text x="1395" y="624" text-anchor="middle" font-size="11">auth history — read-only</text>
+  <text x="1395" y="644" text-anchor="middle" font-size="11" fill="#555">#32</text>
+
+  <!-- WiFi routers -->
+  <rect x="1090" y="770" width="240" height="70" fill="#fff" stroke="#444" rx="6"/>
+  <text x="1210" y="796" text-anchor="middle" font-size="14" font-weight="bold">Subscriber WiFi routers</text>
+  <text x="1210" y="818" text-anchor="middle" font-size="12">(TP-Link EX141, TR-069)</text>
+  <line x1="1190" y1="646" x2="1200" y2="768" stroke="#444" stroke-width="1.8" marker-end="url(#arr)"/>
+  <text x="1230" y="715" font-size="11" fill="#444">TR-069 (phones home)</text>
+
+  <!-- FortiGate -->
+  <rect x="490" y="856" width="420" height="40" fill="#fff" stroke="#444" rx="6"/>
+  <text x="700" y="882" text-anchor="middle" font-size="14" font-weight="bold">HTTPS REST API → FortiGate firewall</text>
+
+  <!-- connector-to-infra arrows -->
+  <line x1="375" y1="510" x2="770" y2="598" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="645" y1="510" x2="660" y2="854" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="905" y1="510" x2="1140" y2="564" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="1165" y1="510" x2="1380" y2="564" stroke="#444" stroke-width="1.5" marker-end="url(#arr)"/>
+  <line x1="477" y1="380" x2="570" y2="598" stroke="#444" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arr)"/>
+  <line x1="400" y1="304" x2="340" y2="564" stroke="#444" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arr)"/>
+
+  <text x="760" y="930" text-anchor="middle" font-size="13" fill="#333">#24, #25, #26, #27, #28, #29, #30, #31, #32 = draft task references</text>
+</svg>
