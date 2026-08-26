@@ -4,6 +4,14 @@ This project is a pnpm workspace monorepo using TypeScript, designed to manage n
 
 The "Network Device Manager" application aims to simplify the complex task of managing diverse network hardware through a single pane of glass, enhancing efficiency and reducing operational overhead for network administrators. The integration of an AI assistant further augments this by providing intelligent command execution and diagnostic support, acting as a "logged-in admin" on the user's router.
 
+## Engineering Workflow
+
+Before implementation, debugging, refactoring, or integration work, load
+`.agents/skills/harness-engineering/SKILL.md` to prepare proportionate safety
+and verification boundaries, then apply the existing Loop Engineering cycle.
+For device, subscriber-data, Carol/AI, WhatsApp, or external-service work, also
+follow `docs/router-control-harness.md`.
+
 # User Preferences
 
 I prefer iterative development. I want to be asked before making major changes. I want detailed explanations. I prefer simple language. I like functional programming. Do not make changes to the folder `lib/api-zod/dist`. Do not make changes to the folder `lib/api-client-react/dist`. Do not make changes to the folder `lib/db/dist`. The chat AI is positioned as a "logged-in admin" on the user's router. It has exactly one tool, `run_router_command`, which executes any RouterOS command over the active transport (API-SSL / REST / SSH). The system prompt tells it to think like a senior MikroTik engineer who just opened a Terminal: configuration, troubleshooting, diagnostics, statistics, status display, monitoring, scripts — all are in scope. Long-running tools (`/ping`, `/tool/traceroute`, `/tool/torch`, `/tool/bandwidth-test`) must be bounded with `count=N` or `duration=Ns` so they terminate. Read-only commands (print/get/export) run freely; mutating commands (add/set/remove/enable/disable) require explicit user approval first. Read-only role users have mutations server-side blocked via `isMutating()` regardless of AI behavior.
