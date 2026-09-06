@@ -6,6 +6,7 @@ id = "3hsJ4b0yAf0RSlou_5lP4"
 uri = "file://mikrotik-config-2026-03-14.txt"
 type = "text"
 title = "MikroTik Config — 175.139.250.90"
+logical_id = "0d59024f-b541-4b7f-b9da-877b6edb5d0a"
 
 [[outputs]]
 id = "bTjEW0XLJbqhYFMLjj6tl"
@@ -13,3 +14,18 @@ uri = "file://attached_assets/routemanager_architecture.png"
 type = "image"
 title = "RouteManager Architecture (corrected)"
 description = "Layered architecture diagram with all corrections: task references, TR-069, Netmiko #25, and the credentials-DB → OpenVPN → SSH chain."
+logical_id = "8d11ae59-e941-4a20-87b4-f97328a243f3"
+
+[[outputs]]
+id = "u8hVUP7MHzkOn0uXFmN1k"
+uri = "file://deliverables/sample-isp-quotation.xlsx"
+type = "table"
+title = "Sample ISP Platform Quotation"
+description = "Editable Excel quotation with package scope, itemized Starter ISP and Operations Pro pricing, allowances, add-ons, timeline, payment schedule, terms, and acceptance fields."
+logical_id = "828434d2-99be-4e4c-b055-01fe50cb168d"
+content_hash = "sha256:d1f75049a43d683c5aa709359a70135a856fdb662b304243ef884d1be903bd19"
+size = 17020
+mtime_ms = 1788656874215
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:ec3aa48a-9380-4706-88b8-2997cc48fc9b/828434d2-99be-4e4c-b055-01fe50cb168d/d14cdf87-8244-4abf-be53-0a5309f1ae59"
+storage_version_token = "1788656881315029"
+content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
