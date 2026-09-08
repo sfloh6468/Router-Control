@@ -29,3 +29,17 @@ mtime_ms = 1788656874215
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:ec3aa48a-9380-4706-88b8-2997cc48fc9b/828434d2-99be-4e4c-b055-01fe50cb168d/d14cdf87-8244-4abf-be53-0a5309f1ae59"
 storage_version_token = "1788656881315029"
 content_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+
+[[outputs]]
+id = "OrnyQw0gKvodnc3Y4dfD1"
+uri = "file://.local/outputs/Router-Control-Business-Proposal.pptx"
+type = "slides"
+title = "Router Control Business Proposal (PPTX)"
+description = "Editable 10-slide PowerPoint business proposal for the Router Control ISP operations platform."
+logical_id = "78e89f8d-db21-404c-8d52-51fd0e541775"
+content_hash = "sha256:f6816ff31c23c1a5819e71e7a5e0edae2dd577d8275256104d8356b92f55b8a4"
+size = 537086
+mtime_ms = 1788878005480
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:ec3aa48a-9380-4706-88b8-2997cc48fc9b/78e89f8d-db21-404c-8d52-51fd0e541775/f365edc9-0728-4901-8faf-1634116bc9bb"
+storage_version_token = "1788878009314007"
+content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
