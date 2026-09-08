@@ -1,0 +1,28 @@
+kind = "slides"
+previewPath = "/router-control-business-proposal/"
+title = "Router Control Business Proposal"
+description = "A 10-slide business proposal for Router Control, a secure multi-tenant ISP operations platform with network visibility, guarded automation, and Carol AI support."
+version = "1.0.0"
+id = "artifacts/router-control-business-proposal"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/router-control-business-proposal/" ]
+localPort = 21814
+
+[services.development]
+run = "pnpm --filter @workspace/router-control-business-proposal run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/router-control-business-proposal", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/router-control-business-proposal/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21814"
+BASE_PATH = "/router-control-business-proposal/"

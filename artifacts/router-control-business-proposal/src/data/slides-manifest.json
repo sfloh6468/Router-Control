@@ -1,0 +1,82 @@
+[
+  {
+    "id": "f5d3a0f4-8f64-4bb4-a3ab-cfda29f08e01",
+    "position": 1,
+    "filepath": "src/pages/slides/RouterControlTitle.tsx",
+    "title": "Router Control",
+    "description": "A secure operations platform for modern ISPs",
+    "speakerNotes": ""
+  },
+  {
+    "id": "2b5dd8ea-4a40-4a25-8174-55dfb1c73a02",
+    "position": 2,
+    "filepath": "src/pages/slides/OperatingChallenge.tsx",
+    "title": "The operating challenge",
+    "description": "The current operational friction",
+    "speakerNotes": ""
+  },
+  {
+    "id": "cf6b6778-5bc5-4bda-a69a-5e137c909c03",
+    "position": 3,
+    "filepath": "src/pages/slides/Opportunity.tsx",
+    "title": "The opportunity",
+    "description": "A single control plane for ISP operations",
+    "speakerNotes": ""
+  },
+  {
+    "id": "a6e9f3a9-6be4-4ec7-9502-1ac55ab3b704",
+    "position": 4,
+    "filepath": "src/pages/slides/RouterControlDelivers.tsx",
+    "title": "What Router Control delivers",
+    "description": "The platform capabilities",
+    "speakerNotes": ""
+  },
+  {
+    "id": "be84e346-2f54-4546-845e-08bdbcfe5c05",
+    "position": 5,
+    "filepath": "src/pages/slides/CarolAI.tsx",
+    "title": "Carol AI, with human control",
+    "description": "One-to-one AI support with clear escalation",
+    "speakerNotes": ""
+  },
+  {
+    "id": "f9d589ad-b6c4-4f18-838c-94716c0d8606",
+    "position": 6,
+    "filepath": "src/pages/slides/SafeAutomation.tsx",
+    "title": "Safe automation by design",
+    "description": "Guardrails for network operations",
+    "speakerNotes": ""
+  },
+  {
+    "id": "3813e438-b4e1-4f50-9e4f-df6b4fe94e07",
+    "position": 7,
+    "filepath": "src/pages/slides/CommercialModel.tsx",
+    "title": "Modular commercial model",
+    "description": "A package architecture for ISP growth",
+    "speakerNotes": ""
+  },
+  {
+    "id": "c51f0865-3a43-490c-8abc-6e8a88f0a808",
+    "position": 8,
+    "filepath": "src/pages/slides/BusinessValue.tsx",
+    "title": "Business value",
+    "description": "Why Router Control matters",
+    "speakerNotes": ""
+  },
+  {
+    "id": "7bc9be44-7ea7-4015-91e0-1b9a8dbe2e09",
+    "position": 9,
+    "filepath": "src/pages/slides/RolloutApproach.tsx",
+    "title": "Rollout approach",
+    "description": "A controlled path from foundation to launch",
+    "speakerNotes": ""
+  },
+  {
+    "id": "a5a0ea0e-33f5-4b66-9185-28edca8d6c10",
+    "position": 10,
+    "filepath": "src/pages/slides/DecisionRequested.tsx",
+    "title": "Decision requested",
+    "description": "The proposed next step",
+    "speakerNotes": ""
+  }
+]
