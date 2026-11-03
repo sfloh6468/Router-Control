@@ -43,3 +43,31 @@ mtime_ms = 1788878005480
 storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:ec3aa48a-9380-4706-88b8-2997cc48fc9b/78e89f8d-db21-404c-8d52-51fd0e541775/f365edc9-0728-4901-8faf-1634116bc9bb"
 storage_version_token = "1788878009314007"
 content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+
+[[outputs]]
+id = "aEpLsY8M1CSU87HHqpNMm"
+uri = "file://.local/outputs/netpilot-handover/NetPilot-Handbook.html"
+type = "html"
+title = "NetPilot Handbook — Draft for Review"
+description = "Readable 11-chapter product and developer handbook covering Carol, all planned modules, safety, workflows, acceptance criteria, and open decisions. Documentation only; no app implementation."
+logical_id = "423af35d-e824-4b39-9133-db8659ccd05b"
+content_hash = "sha256:430c66f91d823319dcd644005a468afeed193fa9fbe7eaab2ce7ddcbdc67af0f"
+size = 137222
+mtime_ms = 1793691817195
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:ec3aa48a-9380-4706-88b8-2997cc48fc9b/423af35d-e824-4b39-9133-db8659ccd05b/5a3d1ae7-f5ad-48a9-b06f-43f22bb01885"
+storage_version_token = "1793691849029587"
+content_type = "text/html"
+
+[[outputs]]
+id = "b6hPWFpbPjsoZMOwdgTlu"
+uri = "file://.local/outputs/netpilot-handover/NetPilot-DeepSeek-Handover.zip"
+type = "unspecified"
+title = "NetPilot — DeepSeek Handover Package"
+description = "Downloadable package with editable Markdown chapters, self-contained HTML handbook, DeepSeek starting prompt, documentation checks, and SHA-256 integrity manifest. No app source, credentials, or subscriber data included."
+logical_id = "ea58167e-1d24-4909-bb7d-487d7a92df36"
+content_hash = "sha256:96d779829a8e69a4c56b2ba183d6cf493bae8efb0f46c17473355746520433b8"
+size = 99797
+mtime_ms = 1793691817623
+storage_uri = "gcs://replit-rams-assets-sisko/rams/assets/repl:ec3aa48a-9380-4706-88b8-2997cc48fc9b/ea58167e-1d24-4909-bb7d-487d7a92df36/c627e70b-c5c0-4e80-bf9c-5b5d72058b32"
+storage_version_token = "1793691850781957"
+content_type = "application/octet-stream"
