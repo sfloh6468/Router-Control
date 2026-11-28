@@ -19,16 +19,17 @@ The owner currently authorized **handbook drafting only, not app construction**.
 Read the handbook README and all linked chapters:
 
 1. Product requirements.
-2. Carol support.
-3. User workflows.
-4. Security and safety.
-5. Acceptance criteria.
-6. Implementation status.
-7. Build roadmap.
-8. Decisions and open questions.
-9. Feature and package-entitlement matrix.
-10. Sources and coverage, including the complete planning-record ledger.
-11. DeepSeek Harness workspace and safety instructions, if using DSH.
+2. Functional build specification (screen-by-screen/function-by-function behavior).
+3. Carol support.
+4. User workflows.
+5. Security and safety.
+6. Acceptance criteria.
+7. Implementation status.
+8. Build roadmap.
+9. Decisions and open questions.
+10. Feature and package-entitlement matrix.
+11. Sources and coverage, including the complete planning-record ledger.
+12. DeepSeek Harness workspace and safety instructions, if using DSH.
 
 If you only have the single-file HTML edition, use its chapter headings. Do not claim access to unavailable conversation history or Replit-only task records.
 
@@ -36,6 +37,9 @@ If you only have the single-file HTML edition, use its chapter headings. Do not 
 
 - Preserve existing MikroTik/Huawei code unless the owner approves a specific change. Existing code is not the completed NetPilot app.
 - NetPilot is tenant-scoped across records, API, workers, webhooks, AI retrieval, storage, caches, exports and devices.
+- The function-by-function specification defines UI states, inputs, role checks, outcomes and failure paths; do not implement only an API or a screen.
+- GenieACS/TR-069, V-SOL and FortiGate are optional selected driver add-ons under Operations Pro, not standard Starter features and not automatically enabled by the Operations Pro tier alone.
+- A NetPilot SaaS quotation and an ISP subscriber Internet sign-up/cancellation request are different business workflows.
 - Carol supports ISP link/speed/provisioning/managed equipment, not customer-owned TV/phone/computer/app setup.
 - Verify the ISP path and evidence before vendor referral. One device working does not prove perfect speed.
 - Admins can customize runbooks/policies but cannot override safety, support boundaries, privacy or authorization.

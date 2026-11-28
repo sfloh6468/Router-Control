@@ -113,7 +113,7 @@ The following ledger inventories all 48 project task records available during th
 | S-45 | Multi-tenant modular ISP product platform | Tenants, isolation, 12 modules, Starter/Pro/Enterprise packaging, price book, quotations and entitlement provisioning. NP-PRO-01–02, NP-TEN-01–03, NP-COM-01–04; AC-01–04, AC-08–09, AC-68. |
 | S-46 | Online package approval and payment | Archived follow-up proposal; online checkout, subscription billing and payment handling are excluded unless separately approved. |
 | S-47 | Rename proposal to NetPilot | Branding choice is recorded, but the separate ten-slide proposal/deck update is not part of this documentation package. NP-BRD-01; AC-01. |
-| S-48 | Prepare NetPilot handover for DeepSeek | This documentation scope only; no app construction, repository access grant, deployment or live operation. |
+| S-48 | Prepare NetPilot handover for DeepSeek | This documentation scope only; the functional specification expands all app areas into screen/action/error behavior, while no app construction, repository access grant, deployment or live operation is authorized. |
 
 ### Additional older suggestions
 
@@ -143,7 +143,7 @@ The explicit Telegram rejection is based on the conversation, not inferred from 
 | U-DSH | Clarified that the chosen development tool is DeepSeek Harness (DSH) | `DEEPSEEK-START-HERE.md` local-workspace instructions and least-privilege warning |
 | U-PACKAGE | Asked whether TR-069/GenieACS is part of a package and reported a conflicting Google AI summary | Feature/package matrix distinguishes a planned optional Pro driver add-on from a standard included feature; OQ-30 |
 | U-ESTIMATE | Asked for total time and cost to build the complete app | OQ-32 qualifies prior rough estimate as provisional and unmeasured, not a quote or guaranteed cap |
-| U-DOCS-ONLY | Asked to draft handbook but not build app | README, roadmap and starting prompt permission boundaries |
+| U-DOCS-ONLY | Asked to draft handbook but not build app | README, roadmap, functional spec and starting prompt permission boundaries |
 
 ## 5. Nonfunctional and acceptance coverage
 

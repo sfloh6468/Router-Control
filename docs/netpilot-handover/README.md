@@ -12,19 +12,22 @@ Existing MikroTik/Huawei device-manager code and a business proposal are startin
 
 ### Reading order
 
-1. [Product requirements](PRODUCT-REQUIREMENTS.md) — complete module inventory, roles, commercial packaging, and exclusions.
-2. [Carol support specification](CAROL-SUPPORT.md) — support boundaries, messaging, voice/photos, runbooks, policies, handover, and history.
-3. [User workflows](WORKFLOWS.md) — subscriber, staff, admin, network-operator, and sales journeys.
-4. [Security and safety](SECURITY-AND-SAFETY.md) — non-overridable server controls, privacy, approvals, private connectivity, and recovery.
-5. [Acceptance criteria](ACCEPTANCE-CRITERIA.md) — positive and negative scenarios required before handover.
-6. [Implementation status](IMPLEMENTATION-STATUS.md) — inspected source evidence, known limitations, and external-environment setup.
-7. [Build roadmap](BUILD-ROADMAP.md) — dependencies, delivery gates, and safe implementation order.
-8. [Decisions and open questions](DECISIONS-AND-OPEN-QUESTIONS.md) — approved choices, unresolved conflicts, and excluded ideas.
-9. [Feature and package matrix](FEATURE-INVENTORY-AND-PACKAGING.md) — explicit feature-by-feature tier availability and included-versus-add-on status.
-10. [Sources and coverage](SOURCES-AND-COVERAGE.md) — all available project-task records, requirement mapping, and completeness limitations.
-11. [DeepSeek starting prompt](DEEPSEEK-START-HERE.md) — DSH workspace guidance and instructions to paste into the development tool.
+1. [Product requirements](PRODUCT-REQUIREMENTS.md) — system goals, roles, modules, and product boundaries.
+2. [Functional build specification](FUNCTIONAL-BUILD-SPEC.md) — detailed screens, inputs, rules, state changes, permissions, outcomes, and failure handling by function.
+3. [Carol support specification](CAROL-SUPPORT.md) — support boundaries, messaging, media, runbooks, policies, handover and history.
+4. [User workflows](WORKFLOWS.md) — subscriber, staff, admin, operator and sales journeys.
+5. [Security and safety](SECURITY-AND-SAFETY.md) — privacy, approvals, isolation, private connectivity and recovery.
+6. [Acceptance criteria](ACCEPTANCE-CRITERIA.md) — positive, negative and recovery scenarios required for completion.
+7. [Implementation status](IMPLEMENTATION-STATUS.md) — inspected source evidence, known limitations and external setup.
+8. [Build roadmap](BUILD-ROADMAP.md) — dependencies, gates and safe implementation order.
+9. [Decisions and open questions](DECISIONS-AND-OPEN-QUESTIONS.md) — approved choices, unresolved conflicts and deferred ideas.
+10. [Feature and package matrix](FEATURE-INVENTORY-AND-PACKAGING.md) — explicit feature-by-feature tier availability and add-on status.
+11. [Sources and coverage](SOURCES-AND-COVERAGE.md) — available planning-record ledger, requirements mapping and limitations.
+12. [DeepSeek starting prompt](DEEPSEEK-START-HERE.md) — DSH workspace guidance and instructions to paste into the development tool.
 
-The generated single-file HTML edition is for convenient reading. Markdown chapters are the editable source of truth for this draft. A download archive contains these chapters, the HTML edition, and an integrity manifest; it does not contain application source code or real subscriber records.
+The generated single-file HTML edition is for convenient reading. Markdown chapters are the editable source of truth for this draft. A download archive contains all chapters, the HTML edition, checks and an integrity manifest; it does not contain application source code or real subscriber records.
+
+This revision contains 68 requirement identifiers, 56 function-level build entries, 98 acceptance scenarios, and a disposition for each of the 48 available project-task records.
 
 ## What the status words mean
 

@@ -11,6 +11,7 @@ const output = path.join(root, ".local/outputs/netpilot-handover");
 const files = [
   "README.md",
   "PRODUCT-REQUIREMENTS.md",
+  "FUNCTIONAL-BUILD-SPEC.md",
   "CAROL-SUPPORT.md",
   "WORKFLOWS.md",
   "SECURITY-AND-SAFETY.md",
@@ -55,10 +56,12 @@ for (const [name, text] of contents) {
   }
 }
 const acceptance = [...contents.get("ACCEPTANCE-CRITERIA.md").matchAll(/^\| (AC-\d{2}) \|/gm)].map(m => m[1]);
-if (acceptance.length !== 69 || new Set(acceptance).size !== 69) errors.push("Expected 69 unique acceptance cases");
-for (let i = 1; i <= 69; i++) {
+if (acceptance.length !== 98 || new Set(acceptance).size !== 98) errors.push("Expected 98 unique acceptance cases");
+for (let i = 1; i <= 98; i++) {
   if (!acceptance.includes(`AC-${String(i).padStart(2, "0")}`)) errors.push(`Missing acceptance case ${i}`);
 }
+const functions = [...contents.get("FUNCTIONAL-BUILD-SPEC.md").matchAll(/^### (FUNC-[A-Z0-9]+-\d{2}) —/gm)].map(m => m[1]);
+if (functions.length !== 56 || new Set(functions).size !== 56) errors.push("Expected 56 unique functional build entries");
 const coverage = contents.get("SOURCES-AND-COVERAGE.md");
 for (const id of Array.from({length: 48}, (_,i) => i+1)) {
   if (!coverage.includes(`| S-${id} |`)) errors.push(`Missing source coverage S-${id}`);
@@ -130,11 +133,13 @@ const report = {
   documentCount: files.length,
   requirementCount: defined.size,
   acceptanceCaseCount: acceptance.length,
+  functionalBuildEntries: functions.length,
   coreRoadmapSources: 17,
   auditedTaskRecords: inventorySources.length,
   wordCount: [...contents.values()].join("\n").split(/\s+/).filter(Boolean).length,
   checks: ["local Markdown links", "unique declared requirement IDs", "defined requirement references",
-    "acceptance references for each requirement", "69 unique sequential acceptance cases",
+    "acceptance references for each requirement", "56 unique functional build entries",
+    "98 unique sequential acceptance cases",
     "complete 48-record planning ledger", "17 core roadmap sources represented", "basic credential/address patterns",
     "HTML self-contained (inline styles, no scripts or remote assets)"],
   warnings,

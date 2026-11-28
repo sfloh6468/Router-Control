@@ -10,6 +10,8 @@ NetPilot is a secure, modular, multi-tenant ISP operations platform. It should r
 
 The owner has approved documentation now, not app construction. This specification defines future implementation.
 
+`FUNCTIONAL-BUILD-SPEC.md` expands each module into user-visible functions, screens, inputs, permissions, state changes, outputs and failure behavior. Read it alongside this requirements chapter; it is not an authorization to skip unresolved decisions.
+
 **NP-PRO-02 · Planned · Sources S-45, S-39**
 
 Primary roles are platform operator, internal sales administrator, ISP tenant administrator, senior customer-service manager, support agent, senior technician/consultant, network operator, read-only staff, and subscriber/prospect. One person can hold several explicitly assigned capabilities. Existing device-manager roles do not by themselves implement this target model.
