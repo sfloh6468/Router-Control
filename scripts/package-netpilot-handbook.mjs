@@ -18,6 +18,7 @@ const files = [
   "IMPLEMENTATION-STATUS.md",
   "BUILD-ROADMAP.md",
   "DECISIONS-AND-OPEN-QUESTIONS.md",
+  "FEATURE-INVENTORY-AND-PACKAGING.md",
   "SOURCES-AND-COVERAGE.md",
   "DEEPSEEK-START-HERE.md",
 ];
@@ -54,13 +55,19 @@ for (const [name, text] of contents) {
   }
 }
 const acceptance = [...contents.get("ACCEPTANCE-CRITERIA.md").matchAll(/^\| (AC-\d{2}) \|/gm)].map(m => m[1]);
-if (acceptance.length !== 67 || new Set(acceptance).size !== 67) errors.push("Expected 67 unique acceptance cases");
-for (let i = 1; i <= 67; i++) {
+if (acceptance.length !== 69 || new Set(acceptance).size !== 69) errors.push("Expected 69 unique acceptance cases");
+for (let i = 1; i <= 69; i++) {
   if (!acceptance.includes(`AC-${String(i).padStart(2, "0")}`)) errors.push(`Missing acceptance case ${i}`);
 }
 const coverage = contents.get("SOURCES-AND-COVERAGE.md");
-for (const id of [24,25,26,27,28,29,30,31,32,39,40,41,42,43,44,45,47]) {
+for (const id of Array.from({length: 48}, (_,i) => i+1)) {
   if (!coverage.includes(`| S-${id} |`)) errors.push(`Missing source coverage S-${id}`);
+}
+const inventory = coverage.split("## 3. Full task and planning-record audit")[1]?.split("### Additional older suggestions")[0] || "";
+const inventorySources = [...inventory.matchAll(/^\| S-(\d+) \|/gm)].map(m => Number(m[1]));
+if (inventorySources.length !== 48 || new Set(inventorySources).size !== 48 ||
+    !Array.from({length:48}, (_,i)=>i+1).every(id => inventorySources.includes(id))) {
+  errors.push(`Expected a complete unique 48-record task ledger; found ${inventorySources.length}`);
 }
 const acceptanceText = contents.get("ACCEPTANCE-CRITERIA.md");
 for (const id of defined) {
@@ -112,7 +119,7 @@ blockquote{border-left:4px solid #98b9d0;margin:1rem 0;padding:.2rem 1rem;backgr
 .notice{padding:1rem 1.25rem;border-left:4px solid #ac7b2a;background:#fff9ed;border-radius:4px;margin-bottom:2rem}footer{max-width:1300px;margin:0 auto;padding:0 2rem 3rem;color:var(--muted);font-size:.85rem}
 @media(max-width:900px){.layout{display:block;padding:1rem}aside{position:static;max-height:none;margin-bottom:1.5rem}section{padding:1.2rem}header{padding:2rem 1.5rem}}
 @media print{body{background:white;font-size:10pt}header{padding:1rem;color:var(--navy);background:white}.layout{display:block;padding:0}aside{display:none}section{border:0;padding:0;border-radius:0;break-before:page}table{display:table;font-size:8pt}th,td{min-width:0;padding:.35rem}pre{white-space:pre-wrap}a{color:inherit;text-decoration:none}}
-</style></head><body><header><div class="badge">Draft · 3 November 2026 · Owner review</div><h1>NetPilot Handbook</h1><p>Product requirements, Carol support operations, safety controls, and a portable DeepSeek developer handover.</p></header>
+</style></head><body><header><div class="badge">Re-evaluated draft · 28 November 2026 · Owner review</div><h1>NetPilot Handbook</h1><p>Product requirements, Carol support operations, safety controls, explicit package entitlements, and a portable DeepSeek developer handover.</p></header>
 <div class="layout"><aside><strong>Chapters</strong>${navigation}</aside><main><div class="notice"><strong>Documentation only.</strong> No app construction is authorized by this handbook. Planned features and acceptance scenarios are not claims of working functionality.</div>${sections}</main></div><footer>Prepared from available project plans and conversation decisions. No credentials or subscriber records are included. This document makes no measured model-superiority claim.</footer></body></html>`;
 
 await fs.mkdir(output, { recursive: true });
@@ -124,10 +131,11 @@ const report = {
   requirementCount: defined.size,
   acceptanceCaseCount: acceptance.length,
   coreRoadmapSources: 17,
+  auditedTaskRecords: inventorySources.length,
   wordCount: [...contents.values()].join("\n").split(/\s+/).filter(Boolean).length,
   checks: ["local Markdown links", "unique declared requirement IDs", "defined requirement references",
-    "acceptance references for each requirement", "67 unique sequential acceptance cases",
-    "17 core roadmap sources represented", "basic credential/address patterns",
+    "acceptance references for each requirement", "69 unique sequential acceptance cases",
+    "complete 48-record planning ledger", "17 core roadmap sources represented", "basic credential/address patterns",
     "HTML self-contained (inline styles, no scripts or remote assets)"],
   warnings,
   applicationTestsRun: false,

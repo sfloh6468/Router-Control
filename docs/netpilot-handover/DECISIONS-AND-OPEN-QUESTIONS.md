@@ -64,6 +64,10 @@ These distinguish explicit conversation decisions from saved roadmap direction; 
 | OQ-26 · Operational targets | SLA/timeout/rate/retry/incident thresholds, no-response expiry and handover ownership timeouts missing | No arbitrary production promises; bounded safe fixture defaults clearly labelled |
 | OQ-27 · Security backlog | Current writer tool lacks deterministic approval; legacy admin typecheck and workflows unverified/failing observations | Baseline verification and safety work precede subscriber automation; no repairs authorized by handbook request |
 | OQ-28 · Archived suggestions | Some automatically archived suggestions resemble later approved work | Do not infer rejection from archival; current explicit requirements govern; don't revive unrelated features |
+| OQ-29 · Subscriber leads and appointments | Carol's older plan asks to book installation; the product catalog puts Google Calendar appointments in Operations Pro | Decide whether Starter only creates a lead/manual scheduling request while calendar-based booking requires the appointment entitlement |
+| OQ-30 · Driver add-ons | The feature roadmap names GenieACS, V-SOL and FortiGate, but does not set exact add-on prices, device counts or what a given Pro contract includes | Show each driver as “optional, select and quote”; enable it only when the approved tenant entitlement names it. Operations Pro alone must not imply every driver |
+| OQ-31 · Device-session transcripts | An older live-console proposal wanted raw live/permanent device command transcripts; later explicit user request covered Carol conversations and takeover | Keep redacted action status/evidence. Ask whether raw transcripts are needed; if so, set retention, access roles, secret redaction and operational-risk review |
+| OQ-32 · Build estimate | A prior assistant gave a broad 6–9 month / US$8,000–16,500 allowance without measuring actual Replit usage or validating the full integration workload | Treat only as a provisional discussion estimate, not a quote, cap, schedule commitment or feature requirement; revise after a bounded milestone and measured spend |
 
 ## Explicit exclusions / no implied permission
 

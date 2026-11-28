@@ -2,6 +2,10 @@
 
 Paste the following into the DeepSeek-powered coding tool after uploading the handbook or granting access to the reviewed private repository. This is a prompt template, not authorization to start work.
 
+## If you are using DeepSeek Harness (DSH)
+
+DSH operates on a selected local workspace; a private GitHub URL pasted into chat does not by itself grant repository access. Authenticate to GitHub outside the prompt, clone the reviewed private repository to a dedicated local folder, and choose that folder as DSH's workspace. Keep DSH scoped to a disposable clone or branch with only the files required for the current review. Do not add production credentials or subscriber exports to the workspace. DSH can read/write workspace files and run commands, so review requested command/file access and keep changes disabled until implementation is explicitly authorized. Check the current official DSH safety notice before using it because the harness is developer-preview software and its controls are not a substitute for isolation.
+
 ---
 
 You are helping develop **NetPilot**, a secure multi-tenant ISP operations platform. **Carol** is its AI subscriber-support assistant.
@@ -22,7 +26,9 @@ Read the handbook README and all linked chapters:
 6. Implementation status.
 7. Build roadmap.
 8. Decisions and open questions.
-9. Sources and coverage.
+9. Feature and package-entitlement matrix.
+10. Sources and coverage, including the complete planning-record ledger.
+11. DeepSeek Harness workspace and safety instructions, if using DSH.
 
 If you only have the single-file HTML edition, use its chapter headings. Do not claim access to unavailable conversation history or Replit-only task records.
 

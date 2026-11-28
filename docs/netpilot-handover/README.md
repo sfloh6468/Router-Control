@@ -1,6 +1,6 @@
 # NetPilot — Product and Developer Handbook
 
-**Draft for owner review · Prepared 3 November 2026**
+**Re-evaluated draft for owner review · 28 November 2026**
 
 ## Read this first
 
@@ -20,8 +20,9 @@ Existing MikroTik/Huawei device-manager code and a business proposal are startin
 6. [Implementation status](IMPLEMENTATION-STATUS.md) — inspected source evidence, known limitations, and external-environment setup.
 7. [Build roadmap](BUILD-ROADMAP.md) — dependencies, delivery gates, and safe implementation order.
 8. [Decisions and open questions](DECISIONS-AND-OPEN-QUESTIONS.md) — approved choices, unresolved conflicts, and excluded ideas.
-9. [Sources and coverage](SOURCES-AND-COVERAGE.md) — source descriptions, requirement mapping, and completeness limitations.
-10. [DeepSeek starting prompt](DEEPSEEK-START-HERE.md) — instructions to paste into the development tool.
+9. [Feature and package matrix](FEATURE-INVENTORY-AND-PACKAGING.md) — explicit feature-by-feature tier availability and included-versus-add-on status.
+10. [Sources and coverage](SOURCES-AND-COVERAGE.md) — all available project-task records, requirement mapping, and completeness limitations.
+11. [DeepSeek starting prompt](DEEPSEEK-START-HERE.md) — DSH workspace guidance and instructions to paste into the development tool.
 
 The generated single-file HTML edition is for convenient reading. Markdown chapters are the editable source of truth for this draft. A download archive contains these chapters, the HTML edition, and an integrity manifest; it does not contain application source code or real subscriber records.
 
@@ -40,7 +41,11 @@ Requirement identifiers such as `NP-CAR-07` stay stable during development. Acce
 
 The latest explicit owner instruction takes precedence over older plans. Non-overridable security and privacy controls cannot be weakened by an AI prompt, admin policy, imported chat, or lower-priority document. If source instructions conflict or evidence is missing, record the conflict and ask before implementing the affected behavior.
 
-The handbook is based on the available conversation, current saved task descriptions, and a proportionate read-only source inspection. It is **not a verbatim export of every original chat message**. Unavailable or compacted history cannot be reconstructed with certainty. No universal claim that a model is “smartest” is established here.
+The handbook was re-audited against the current descriptions of all 48 available project-task records and the available conversation decisions. The existing code inventory reflects a bounded source inspection dated 3 November 2026; it was not freshly re-tested for this documentation revision. This is **not a verbatim export of every original chat message**. Unavailable or compacted history cannot be reconstructed with certainty. No universal claim that a model is “smartest” is established here.
+
+### Package inclusion is explicit
+
+“A feature is in the NetPilot roadmap” does not mean it is included in every customer package. The feature matrix is the draft package-level source of truth. In particular, **GenieACS/TR-069 is planned as an optional Operations Pro driver add-on, not a feature included by default in Starter ISP or automatically in every Operations Pro subscription.** No price or contracted device allowance is set yet.
 
 ## Sharing with DeepSeek or GitHub
 

@@ -180,7 +180,7 @@ Initial module catalog: Platform Core; Network Device Manager; Additional Device
 | Tier | Initial bundle |
 |---|---|
 | Starter ISP | Core tenant/users/buildings/subscribers/imports/audit; standard MikroTik/Huawei manager; basic supported AAA visibility; Carol, runbooks/policies, official WhatsApp, multilingual text/photos/voice-note understanding with written replies; history/shadow/human handoff/model selection |
-| Operations Pro | Private connectivity; deeper multi-vendor diagnostics; V-SOL/FortiGate/GenieACS as selected add-ons; tickets/outages/appointments/backups/operations views; eligible approved single-target actions |
+| Operations Pro | Private connectivity; deeper multi-vendor diagnostics; optional selected V-SOL/FortiGate/GenieACS driver add-ons (none included by default); tickets/outages/appointments/backups/operations views; eligible approved single-target actions |
 | Enterprise / Custom | Guarded custom/broader automation; custom integrations; multiple sites/HA/dedicated infrastructure; advanced compliance/retention/reporting; bespoke limits, migration, SLA/support and rollout |
 
 All customers start with Starter ISP. Modules remain independently metered and enforced, including driver add-ons. Security is mandatory in every tier: Enterprise must not be required for baseline isolation, safe approval, or privacy. Bundle contents, limits, and commercial prices remain configurable. Basic human handoff is included even if advanced ticketing is an upgrade.
@@ -190,6 +190,16 @@ All customers start with Starter ISP. Modules remain independently metered and e
 Provide a versioned MYR price book: setup/monthly fees, allowances, optional usage charges, discounts, taxes, effective dates, and dimensions for tenants/seats/buildings/subscribers/devices/WhatsApp/AI/storage/support. A sales admin assembles a valid package with prerequisites; exports a quotation with inclusions, exclusions, assumptions, validity, one-time cost, and estimated recurring cost; saves revisions; and converts explicit approval into entitlements without re-entry. Final prices, tax rules, and contractual SLAs remain open.
 
 Automatic charging/payment checkout and public self-service ISP signup are excluded pending separate approval.
+
+**NP-COM-03 · Planned package-entitlement baseline · Source S-45**
+
+The feature/package matrix in `FEATURE-INVENTORY-AND-PACKAGING.md` is authoritative for this draft's explicit inclusion status. Starter ISP includes the standard MikroTik/Huawei capabilities and Carol/Policy Studio. V-SOL, FortiGate, and GenieACS/TR-069 are Operations Pro **selectable driver add-ons**, not standard included features. An Operations Pro subscription alone does not activate any specific optional driver unless the tenant's quoted entitlements list it. No final driver price, device allowance, or contractual service commitment has been approved.
+
+Baseline tenant isolation, privacy, authentication, server-side authorization, action approvals, and audit apply to every package. A higher tier or optional driver does not waive safety controls. Module activation requires all named entitlements, prerequisites, valid integration configuration, and support for the actual hardware/version.
+
+**NP-COM-04 · Planned sales-workflow boundary · Sources S-29, S-41, S-45**
+
+Distinguish ISP-to-subscriber lead/cancellation requests from NetPilot-to-ISP SaaS package quotations. Subscriber lead capture and staff-request routing do not automatically imply entitlement to calendar slot selection; calendar booking is proposed as an Operations Pro module. Confirm whether Starter Carol captures an installation request for manual scheduling when the calendar module is not entitled. Neither sales journey includes payment processing or automatic subscriber service provisioning/deactivation.
 
 ## 9. Reliability, deployment, and presentation
 

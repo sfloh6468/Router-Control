@@ -83,6 +83,8 @@ Customer-service windows, approved utility templates, opt-in/contact basis, quie
 
 Use guided choices where appropriate: no internet, slow speed, WiFi weak, billing/account inquiry; “done,” “still red,” and similar troubleshooting responses. Also understand free text; do not force every subscriber statement into a button or reject valid complaints.
 
+Reviewable starting runbooks must explicitly cover: model-appropriate router/ONU LED indicators and supplied diagrams; safe checks that the ISP-provided power/fiber/CAT6 connections are seated, without asking customers to open, splice, clean, or otherwise handle optical fiber; an ISP-approved restart path for identified managed equipment; and a read-only account/session check for billing or account-status questions. A restart, activation, reset, or other consequential action must be a separately entitled and server-authorized action, not something implied by chatbot troubleshooting text. Never give unsupported instructions such as factory-resetting a router.
+
 **NP-CAR-08**
 
 Accept router/ONU photos and speed/error screenshots. Provide approved LED/cabling diagrams. Treat visual interpretation as uncertain unless supported by the image and hardware model. Poor lighting or ambiguous LEDs prompt clarification/new photo or staff review. Do not infer optical measurements or actual throughput from an LED image.
@@ -177,6 +179,8 @@ Authorized staff see live transcripts, subscriber/unit/case context, current own
 “Take over” changes ownership atomically, stops further Carol dispatch, cancels unsent drafts/queued messages, records the actor/time, and transparently announces human support. Recheck ownership immediately before sending. A message already accepted by WhatsApp cannot be recalled reliably; expose it as in flight/delivered and prevent subsequent duplicate replies.
 
 Staff can message the subscriber from the shared inbox, add private notes, resolve, or “Return to Carol” with a summary. Carol re-reads current state after handback. No simultaneous AI/human owner; takeover may occur without waiting for Carol to request handoff.
+
+The console must show a redacted, correlated action timeline and results. Whether authorized staff also need to view a live and retained raw device command/response transcript is unresolved; do not expose a raw terminal transcript merely because a device action is linked to the support case.
 
 ## 8. Staff-initiated contact and handover
 

@@ -15,9 +15,9 @@ An evidence record must state requirement, fixture/provider/device version, envi
 | AC-05 | NP-DAT-01 | External subscriber fetch succeeds, then times out | Success imports/maps records; failure visible and last-known data labelled stale; no empty-success replacement |
 | AC-06 | NP-DAT-02–03 | Workbook has valid rows, blanks, invalid dates, duplicate units and malformed serials; import twice | Per-row report; stable upsert; ambiguous mapping quarantined; no cross-tenant merge |
 | AC-07 | NP-DAT-04, NP-NET-01 | Open and close one approved site session | No fetched site destination/VPN credential persists in DB, logs, prompts, temp artifacts or caches |
-| AC-08 | NP-COM-01–02 | Sales selects missing prerequisites and edits a price-book version | Invalid bundle refused; approved revision preserves MYR fees, allowances, discounts/tax assumptions, validity and exclusions |
+| AC-08 | NP-COM-01–02, NP-COM-04 | Sales selects missing prerequisites and edits a price-book version | Invalid bundle refused; NetPilot package quote is distinct from subscriber Internet plans; approved revision preserves MYR fees, allowances, discounts/tax assumptions, validity and exclusions |
 | AC-09 | NP-COM-02 | Approve quotation twice | One tenant entitlement result with revision/audit; no payment collected |
-| AC-10 | NP-SAL-01–02 | Prospect requests installation; existing subscriber declines retention and cancels | Correct lead/request and manager notice; no disclosure of other occupants; no automatic service or billing mutation |
+| AC-10 | NP-SAL-01–02, NP-COM-04 | Prospect requests installation; existing subscriber declines retention and cancels, with/without Calendar entitlement | Correct lead/request and manager notice; no disclosure of other occupants; no automatic service/billing mutation; booking uses only entitled calendar or creates a manual staff request |
 
 ## Carol and policy behavior
 
@@ -95,6 +95,8 @@ An evidence record must state requirement, fixture/provider/device version, envi
 | AC-65 | NP-OPS-02, NP-SEC-10 | Restore encrypted backup into isolated staging | Integrity and restore evidence, approved RPO/RTO comparison, no production overwrite |
 | AC-66 | NP-DEP-01 | Failed release or migration validation | Deployment gated; rollback/compensation demonstrated; isolated secrets and services |
 | AC-67 | NP-PIL-01 | Staff pilot then one building with kill/takeover controls | Approved cohort/limits; measured results; no expansion until owner approval |
+| AC-68 | NP-COM-01, NP-COM-03 | Starter tenant requests GenieACS; sales later quotes the selected GenieACS driver add-on | Starter UI/API/Carol tools cannot use the driver by default; approved explicit entitlement enables only the selected driver and stated limits; no price or hardware support is invented |
+| AC-69 | NP-ACS-01, NP-ACS-02, NP-COM-03 | Properly entitled tenant checks a registered, stale, and unregistered TR-069 router | GenieACS-backed state and last contact are capability-aware; stale/unregistered/unsupported status is explicit; only separately approved exact-target actions are available and audited |
 
 ## Verification levels and launch gates
 

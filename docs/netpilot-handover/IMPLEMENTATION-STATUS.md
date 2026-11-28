@@ -1,6 +1,6 @@
 # Implementation Status and Engineering Starting Point
 
-**Inspection date: 3 November 2026. Read-only source inspection only.**
+**Code inventory last inspected: 3 November 2026. Planning-record coverage re-evaluated: 28 November 2026. Read-only inspection only.**
 
 No app build, browser suite, typecheck, production query, device connection, or workflow restart was performed for this documentation request. Earlier conversation reports of passing checks are historical, not revalidated here.
 
@@ -42,7 +42,7 @@ These are inspected technical starting facts, not a recommendation to rewrite th
 
 - The backlog contains an API admin parameter typecheck issue involving Express parameter types. The current file still has the relevant code shape, but no check was run to confirm the exact current error.
 - Earlier context reported Vite dependency-resolution problems in the device-manager workflow. Do not claim this is fixed or necessarily still the same error.
-- Environment notices during drafting reported failed device-manager/e2e/mockup workflows and running API/deck workflows. These are status observations only; no repair was attempted because the owner prohibited app work.
+- Planning records also note a flaky parallel end-to-end suite and text-dependent selectors. Their current conditions were not rechecked.
 - Prompt-only writer approval is a confirmed source-level gap. Do not enable Carol automation by reusing the unrestricted staff writer command path.
 - Existing per-owner scoping must be migrated deliberately to tenant membership. It is not interchangeable with complete multi-tenant isolation.
 
